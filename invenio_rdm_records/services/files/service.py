@@ -6,6 +6,7 @@
 # it under the terms of the MIT License; see LICENSE file for more details.
 
 """File Service API."""
+
 from invenio_records_resources.services import FileService
 
 from invenio_rdm_records.services.errors import RecordDeletedException
@@ -25,9 +26,9 @@ class RDMFileService(FileService):
             if not can_read_deleted:
                 raise RecordDeletedException(record)
 
-    def _get_record(self, id_, identity, action, file_key=None):
+    def _get_record(self, id_, identity, action, file_key=None, **kwargs):
         """Get the associated record."""
-        record = super()._get_record(id_, identity, action, file_key)
+        record = super()._get_record(id_, identity, action, file_key, **kwargs)
         self._check_record_deleted_permissions(record, identity)
 
         return record
