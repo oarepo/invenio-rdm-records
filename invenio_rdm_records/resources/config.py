@@ -9,6 +9,7 @@
 # it under the terms of the MIT License; see LICENSE file for more details.
 
 """Resources configuration."""
+
 from copy import deepcopy
 
 import marshmallow as ma
@@ -343,6 +344,8 @@ class RDMDraftMediaFilesResourceConfig(FileResourceConfig, ConfiguratorMixin):
         "item-content": "/media-files/<key>/content",
         "item-commit": "/media-files/<key>/commit",
         "list-archive": "/media-files-archive",
+        # test should be put to invenio-records-resources
+        "item-multipart-content": "/files/<path:key>/content/<int:part>",
     }
 
 
