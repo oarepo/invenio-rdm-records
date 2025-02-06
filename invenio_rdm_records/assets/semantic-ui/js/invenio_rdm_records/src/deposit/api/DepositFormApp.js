@@ -30,13 +30,15 @@ import { RDMUploadProgressNotifier } from "../components/UploadProgressNotifier"
 export class DepositFormApp extends Component {
   constructor(props) {
     super(props);
-
     const recordSerializer = props.recordSerializer
       ? props.recordSerializer
       : new RDMDepositRecordSerializer(
           props.config.default_locale,
           props.config.custom_fields.vocabularies
         );
+
+    const { service: globalFilesService, apiClient: globalFileApiClient } =
+      window.invenio?.files || {};
 
     const apiHeaders = props.config.apiHeaders ? props.config.apiHeaders : null;
     const additionalApiConfig = { headers: apiHeaders };
@@ -51,15 +53,13 @@ export class DepositFormApp extends Component {
 
     const fileApiClient = props.fileApiClient
       ? props.fileApiClient
-      : new RDMDepositFileApiClient(additionalApiConfig);
+      : globalFileApiClient;
 
     const draftsService = props.draftsService
       ? props.draftsService
       : new RDMDepositDraftsService(apiClient);
 
-    const filesService = props.filesService
-      ? props.filesService
-      : new RDMDepositFilesService(fileApiClient, props.config.fileUploadConcurrency);
+    const filesService = props.filesService ? props.filesService : globalFilesService;
 
     const service = new DepositService(draftsService, filesService);
 
