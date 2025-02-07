@@ -17,6 +17,11 @@ const BASE_HEADERS = {
   "octet-stream": { "Content-Type": "application/octet-stream" },
 };
 
+export const FILE_TRANSFER_TYPE = {
+  LOCAL: "L",
+  MULTIPART: "M",
+};
+
 /**
  * API client response.
  */
