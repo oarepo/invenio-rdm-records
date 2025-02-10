@@ -85,7 +85,15 @@ export class DepositFilesService {
     this.progressNotifier = progressNotifier;
   }
 
+  async initializeUpload(initializeUploadURL, file) {
+    throw new Error("Not implemented.");
+  }
+
   async upload(initializeUploadURL, file, progressNotifier) {
+    throw new Error("Not implemented.");
+  }
+
+  async finalizeUpload(commitFileURL, file) {
     throw new Error("Not implemented.");
   }
 
@@ -106,7 +114,7 @@ export class RDMDepositFilesService extends DepositFilesService {
     this.uploaderQueue = new UploaderQueue();
   }
 
-  _initializeUpload = async (initializeUploadURL, file) => {
+  initializeUpload = async (initializeUploadURL, file) => {
     const response = await this.fileApiClient.initializeFileUpload(
       initializeUploadURL,
       file.name
@@ -128,7 +136,7 @@ export class RDMDepositFilesService extends DepositFilesService {
       (cancelFn) => this.progressNotifier.onUploadStarted(file.name, cancelFn)
     );
 
-  _finalizeUpload = async (commitFileURL, file) => {
+  finalizeUpload = async (commitFileURL, file) => {
     // Regardless of what is the status of the finalize step we start
     // the next upload in the queue
     this.uploaderQueue.markCompleted(file);
@@ -150,7 +158,7 @@ export class RDMDepositFilesService extends DepositFilesService {
   _startNewUpload = async (initializeUploadURL, file) => {
     let initializedFileMetadata;
     try {
-      initializedFileMetadata = await this._initializeUpload(initializeUploadURL, file);
+      initializedFileMetadata = await this.initializeUpload(initializeUploadURL, file);
     } catch (error) {
       this._onError(file);
       return;
@@ -160,7 +168,7 @@ export class RDMDepositFilesService extends DepositFilesService {
     const commitFileURL = initializedFileMetadata.links.commit;
     try {
       await this._doUpload(startUploadURL, file);
-      const fileData = await this._finalizeUpload(commitFileURL, file);
+      const fileData = await this.finalizeUpload(commitFileURL, file);
       this.progressNotifier.onUploadCompleted(
         fileData.key,
         fileData.size,

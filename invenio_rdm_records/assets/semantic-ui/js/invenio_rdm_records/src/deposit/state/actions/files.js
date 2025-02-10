@@ -13,30 +13,109 @@ import {
   FILE_IMPORT_STARTED,
   FILE_IMPORT_SUCCESS,
   FILE_UPLOAD_SAVE_DRAFT_FAILED,
+  FILE_UPLOAD_ADDED,
+  FILE_UPLOAD_FINISHED,
+  FILE_UPLOAD_FAILED,
 } from "../types";
-import { saveDraftWithUrlUpdate } from "./deposit";
+import { save, saveDraftWithUrlUpdate } from "./deposit";
+
+const _fileUploadSaveDraft = async (dispatch, draft, draftService) => {
+  try {
+    const response = await saveDraftWithUrlUpdate(draft, draftService);
+    // update state with created draft
+    dispatch({
+      type: DRAFT_FETCHED,
+      payload: { data: response.data },
+    });
+    return response;
+  } catch (error) {
+    dispatch({
+      type: FILE_UPLOAD_SAVE_DRAFT_FAILED,
+      payload: { errors: error.errors },
+    });
+    throw error;
+  }
+};
+
+export const initializeFileUpload = (draft, file) => {
+  return async (dispatch, _, config) => {
+    const savedDraft = await _fileUploadSaveDraft(
+      dispatch,
+      draft,
+      config.service.drafts
+    );
+    const uploadFileUrl = savedDraft.data.links.files;
+
+    try {
+      const initializedFileMetadata = await config.service.files.initializeUpload(
+        uploadFileUrl,
+        file
+      );
+      dispatch({
+        type: FILE_UPLOAD_ADDED,
+        payload: {
+          filename: file.name,
+        },
+      });
+      return initializedFileMetadata;
+    } catch (error) {
+      dispatch({ type: FILE_UPLOAD_FAILED, payload: { filename: file.name } });
+      throw error;
+    }
+  };
+};
+
+export const uploadFile = (draft, file, uploadUrl) => {
+  return async (dispatch, _, config) => {
+    let uploadFileUrl;
+
+    if (!uploadUrl) {
+      const savedDraft = await _fileUploadSaveDraft(
+        dispatch,
+        draft,
+        config.service.drafts
+      );
+      uploadFileUrl = savedDraft.data.links.files;
+    } else {
+      uploadFileUrl = uploadUrl;
+    }
+
+    config.service.files.upload(uploadFileUrl, file);
+  };
+};
 
 export const uploadFiles = (draft, files) => {
   return async (dispatch, _, config) => {
-    let response;
-    try {
-      response = await saveDraftWithUrlUpdate(draft, config.service.drafts);
-      // update state with created draft
-      dispatch({
-        type: DRAFT_FETCHED,
-        payload: { data: response.data },
-      });
+    const savedDraft = await _fileUploadSaveDraft(
+      dispatch,
+      draft,
+      config.service.drafts
+    );
 
-      // upload files
-      const uploadFileUrl = response.data.links.files;
-      for (const file of files) {
-        config.service.files.upload(uploadFileUrl, file);
-      }
-    } catch (error) {
+    // upload files
+    const uploadFileUrl = savedDraft.data.links.files;
+    for (const file of files) {
+      uploadFile(draft, file, uploadFileUrl);
+    }
+  };
+};
+
+export const finalizeUpload = (commitFileUrl, file) => {
+  return async (dispatch, _, config) => {
+    try {
+      const response = await config.service.files.finalizeUpload(commitFileUrl, file);
       dispatch({
-        type: FILE_UPLOAD_SAVE_DRAFT_FAILED,
-        payload: { errors: error.errors },
+        type: FILE_UPLOAD_FINISHED,
+        payload: {
+          filename: file.name,
+          size: response.size,
+          checksum: response.checksum,
+          links: response.links,
+        },
       });
+      return response;
+    } catch (error) {
+      dispatch({ type: FILE_UPLOAD_FAILED, payload: { filename: file.name } });
       throw error;
     }
   };
