@@ -350,7 +350,7 @@ export class RDMDepositFileApiClient extends DepositFileApiClient {
     return this.axiosWithConfig.post(link, {});
   }
 
-  deleteFile(fileLinks) {
-    return this.axiosWithConfig.delete(fileLinks.self);
+  deleteFile(fileLinks, options = {}) {
+    return this.axiosWithConfig.delete(fileLinks.self, options);
   }
 }

@@ -121,12 +121,12 @@ export const finalizeUpload = (commitFileUrl, file) => {
   };
 };
 
-export const deleteFile = (file) => {
+export const deleteFile = (file, options) => {
   return async (dispatch, _, config) => {
     try {
       const fileLinks = file.links;
-      await config.service.files.delete(fileLinks);
-
+      console.log("DF", file, options);
+      await config.service.files.delete(fileLinks, options);
       dispatch({
         type: FILE_DELETED_SUCCESS,
         payload: {

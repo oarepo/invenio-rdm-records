@@ -97,7 +97,7 @@ export class DepositFilesService {
     throw new Error("Not implemented.");
   }
 
-  async delete(fileLinks) {
+  async delete(fileLinks, options) {
     throw new Error("Not implemented.");
   }
 
@@ -201,8 +201,8 @@ export class RDMDepositFilesService extends DepositFilesService {
     await this._startNextUpload();
   };
 
-  delete = async (fileLinks) => {
-    return await this.fileApiClient.deleteFile(fileLinks);
+  delete = async (fileLinks, options) => {
+    return await this.fileApiClient.deleteFile(fileLinks, options);
   };
 
   importParentRecordFiles = async (draftLinks) => {

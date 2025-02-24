@@ -6,7 +6,13 @@
 // under the terms of the MIT License; see LICENSE file for more details.
 
 import { connect } from "react-redux";
-import { deleteFile, importParentFiles, uploadFiles } from "../../state/actions";
+import {
+  deleteFile,
+  importParentFiles,
+  initializeFileUpload,
+  uploadFile,
+  uploadFiles,
+} from "../../state/actions";
 import { FileUploaderComponent } from "./FileUploader";
 
 const mapStateToProps = (state) => {
@@ -25,9 +31,11 @@ const mapStateToProps = (state) => {
 };
 
 const mapDispatchToProps = (dispatch) => ({
+  initializeFileUpload: (draft, file) => dispatch(initializeFileUpload(draft, file)),
+  uploadFile: (draft, file) => dispatch(uploadFile(draft, file)),
   uploadFiles: (draft, files) => dispatch(uploadFiles(draft, files)),
   importParentFiles: () => dispatch(importParentFiles()),
-  deleteFile: (file) => dispatch(deleteFile(file)),
+  deleteFile: (file, options) => dispatch(deleteFile(file, options)),
 });
 
 export const FileUploader = connect(
@@ -35,5 +43,6 @@ export const FileUploader = connect(
   mapDispatchToProps
 )(FileUploaderComponent);
 
-export { FileUploaderArea } from "./FileUploaderArea";
+export { FileUploaderArea, FilesListTable } from "./FileUploaderArea";
 export { FileUploaderToolbar } from "./FileUploaderToolbar";
+export * from "./hooks";
