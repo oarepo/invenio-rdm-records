@@ -185,9 +185,7 @@ class PIDsService(RecordService):
             pid_record = record
             pid_manager = self.pid_manager
 
-        # no need to validate since the record class was already published
-        pid_attrs = pid_record.pids.get(scheme)
-        pid = pid_manager.read(scheme, pid_attrs["identifier"], pid_attrs["provider"])
+
 
         # Determine landing page (use scheme specific if available)
         links = self.links_item_tpl.expand(identity, record)
@@ -210,12 +208,18 @@ class PIDsService(RecordService):
         if relations:
             relations.dereference()
 
-        if pid.is_registered():
-            self.require_permission(identity, "pid_update", record=record)
-            pid_manager.update(pid_record, scheme, url=url)
-        else:
-            self.require_permission(identity, "pid_register", record=record)
-            pid_manager.register(pid_record, scheme, url=url)
+        # no need to validate since the record class was already published
+        pid_attrs = pid_record.pids.get(scheme)
+
+        if pid_attrs is not None:
+            pid = pid_manager.read(scheme, pid_attrs["identifier"], pid_attrs["provider"])
+
+            if pid.is_registered():
+                self.require_permission(identity, "pid_update", record=record)
+                pid_manager.update(pid_record, scheme, url=url)
+            else:
+                self.require_permission(identity, "pid_register", record=record)
+                pid_manager.register(pid_record, scheme, url=url)
 
         # draft and index do not need commit/refresh
 
