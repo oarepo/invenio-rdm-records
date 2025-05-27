@@ -209,7 +209,7 @@ class PIDsService(RecordService):
             relations.dereference()
 
         # no need to validate since the record class was already published
-        pid_attrs = pid_record.pids.get(scheme)
+        pid_attrs = pid_record.get('pids', {}).get(scheme, None)
 
         if pid_attrs is not None:
             pid = pid_manager.read(scheme, pid_attrs["identifier"], pid_attrs["provider"])
