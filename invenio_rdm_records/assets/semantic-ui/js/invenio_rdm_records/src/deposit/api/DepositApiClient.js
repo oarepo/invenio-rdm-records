@@ -1,6 +1,7 @@
 // This file is part of Invenio-RDM-Records
 // Copyright (C) 2020-2023 CERN.
 // Copyright (C) 2020-2022 Northwestern University.
+// Copyright (C)      2025 CESNET.
 //
 // Invenio-RDM-Records is free software; you can redistribute it and/or modify it
 // under the terms of the MIT License; see LICENSE file for more details.
@@ -17,6 +18,27 @@ const BASE_HEADERS = {
   },
   "octet-stream": { "Content-Type": "application/octet-stream" },
 };
+
+class UnsupportedTransferTypeError extends Error {
+  file;
+  transferType;
+  supportedTypes;
+  isUserFacing;
+
+  constructor(message, opts) {
+    super(message);
+    this.isUserFacing = opts?.isUserFacing ?? false;
+    if (opts?.file) {
+      this.file = opts.file;
+    }
+    if (opts?.transferType) {
+      this.transferType = opts.transferType;
+    }
+    if (opts?.supportedTypes) {
+      this.supportedTypes = opts.supportedTypes;
+    }
+  }
+}
 
 /**
  * API client response.
@@ -301,11 +323,15 @@ export class DepositFileApiClient {
     return axios.isCancel(error);
   }
 
-  initializeFileUpload(initializeUploadUrl, filename) {
+  initializeFileUpload(initializeUploadUrl, filename, transferOptions) {
     throw new Error("Not implemented.");
   }
 
   uploadFile(uploadUrl, file, onUploadProgress, cancel) {
+    throw new Error("Not implemented.");
+  }
+
+  uploadPart(uploadParams) {
     throw new Error("Not implemented.");
   }
 
@@ -322,10 +348,27 @@ export class DepositFileApiClient {
  * Default File API Client for deposits.
  */
 export class RDMDepositFileApiClient extends DepositFileApiClient {
-  initializeFileUpload(initializeUploadUrl, filename) {
+  constructor(additionalApiConfig, defaultTransferType, transferTypes) {
+    super(additionalApiConfig);
+    this.defaultTransferType = defaultTransferType || "L";
+    this.transferTypes = transferTypes || ["L"];
+  }
+
+  initializeFileUpload(initializeUploadUrl, filename, transferOptions = {}) {
+    const { fileSize = 0, type = this.defaultTransferType, ...opts } = transferOptions;
+
+    if (!this.transferTypes.includes(type)) {
+      throw new UnsupportedTransferTypeError(
+        `Unsupported upload TransferType "${type}". Server supports: ${this.transferTypes}`,
+        { filename, type, supportedTypes: this.transferTypes }
+      );
+    }
+
     const payload = [
       {
         key: filename,
+        size: fileSize,
+        transfer: { type, ...opts },
       },
     ];
     return this.axiosWithConfig.post(initializeUploadUrl, payload, {});
@@ -353,5 +396,24 @@ export class RDMDepositFileApiClient extends DepositFileApiClient {
 
   deleteFile(fileLinks) {
     return this.axiosWithConfig.delete(fileLinks.self);
+  }
+
+  async uploadPart(uploadParams) {
+    const {
+      signature: { url, expires, headers, method = "PUT" },
+      body,
+      onProgress,
+      signal,
+    } = uploadParams;
+
+    return this.axiosWithConfig.request({
+      url,
+      method,
+      timeout: expires * 1000,
+      data: body,
+      headers: { ...this.apiHeaders["octet-stream"], ...headers },
+      onUploadProgress: onProgress,
+      signal,
+    });
   }
 }
