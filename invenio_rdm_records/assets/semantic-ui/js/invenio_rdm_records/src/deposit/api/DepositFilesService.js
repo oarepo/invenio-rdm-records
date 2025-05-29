@@ -204,7 +204,7 @@ export class RDMDepositFilesService extends DepositFilesService {
       (acc, file) => ({
         ...acc,
         [file.key]: {
-          status: UploadState.finished,
+          status: UploadState.completed,
           size: file.size,
           name: file.key,
           progressPercentage: 100,

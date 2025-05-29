@@ -132,7 +132,9 @@ const FileTableRow = ({
         </div>
       </Table.Cell>
       <Table.Cell data-label={i18next.t("Size")} width={2}>
-        {file.size ? humanReadableBytes(file.size, decimalSizeDisplay) : ""}
+        {file.size
+          ? humanReadableBytes(file.size, decimalSizeDisplay)
+          : i18next.t("N/A")}
       </Table.Cell>
       {!filesLocked && (
         <Table.Cell
