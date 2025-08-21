@@ -26,7 +26,7 @@ class RDMFileService(FileService):
             if not can_read_deleted:
                 raise RecordDeletedException(record)
 
-    def _get_record(self, id_, identity, action, file_key=None):
+    def _get_record(self, id_, identity, action, file_key=None, **kwargs):
         """Get the associated record."""
         record = super()._get_record(id_, identity, action, file_key)
         self._check_record_deleted_permissions(record, identity)
