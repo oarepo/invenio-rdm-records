@@ -17,6 +17,7 @@ from warnings import warn
 from flask import Blueprint
 from flask_iiif import IIIF
 from flask_principal import identity_loaded
+from invenio_base.utils import obj_or_import_string
 from invenio_records_resources.resources.files import FileResource
 
 from . import config
@@ -155,16 +156,63 @@ class InvenioRDMRecords(object):
         """Customized service configs."""
 
         class ServiceConfigs:
-            record = RDMRecordServiceConfig.build(app)
-            record_with_media_files = RDMRecordMediaFilesServiceConfig.build(app)
-            file = RDMFileRecordServiceConfig.build(app)
-            file_draft = RDMFileDraftServiceConfig.build(app)
-            media_file = RDMMediaFileRecordServiceConfig.build(app)
-            media_file_draft = RDMMediaFileDraftServiceConfig.build(app)
-            oaipmh_server = OAIPMHServerServiceConfig
-            record_communities = RDMRecordCommunitiesConfig.build(app)
-            community_records = RDMCommunityRecordsConfig.build(app)
-            record_requests = RDMRecordRequestsConfig.build(app)
+            record = obj_or_import_string(
+                app.config.get(
+                    "RDM_RECORDS_SERVICE_CONFIG_CLASS", RDMRecordServiceConfig
+                )
+            ).build(app)
+            record_with_media_files = obj_or_import_string(
+                app.config.get(
+                    "RDM_RECORDS_MEDIA_FILE_SERVICE_CONFIG_CLASS",
+                    RDMRecordMediaFilesServiceConfig,
+                )
+            ).build(app)
+            file = obj_or_import_string(
+                app.config.get(
+                    "RDM_RECORDS_FILE_RECORD_SERVICE_CONFIG_CLASS",
+                    RDMFileRecordServiceConfig,
+                )
+            ).build(app)
+            file_draft = obj_or_import_string(
+                app.config.get(
+                    "RDM_RECORDS_FILE_DRAFT_SERVICE_CONFIG_CLASS",
+                    RDMFileDraftServiceConfig,
+                )
+            ).build(app)
+            media_file = obj_or_import_string(
+                app.config.get(
+                    "RDM_RECORDS_MEDIA_FILE_RECORD_SERVICE_CONFIG_CLASS",
+                    RDMMediaFileRecordServiceConfig,
+                )
+            ).build(app)
+            media_file_draft = obj_or_import_string(
+                app.config.get(
+                    "RDM_RECORDS_MEDIA_FILE_DRAFT_SERVICE_CONFIG_CLASS",
+                    RDMMediaFileDraftServiceConfig,
+                )
+            ).build(app)
+            oaipmh_server = obj_or_import_string(
+                app.config.get(
+                    "RDM_RECORDS_OAIPMH_SERVER_SERVICE_CONFIG_CLASS",
+                    OAIPMHServerServiceConfig,
+                )
+            )
+            record_communities = obj_or_import_string(
+                app.config.get(
+                    "RDM_RECORDS_COMMUNITIES_CONFIG_CLASS", RDMRecordCommunitiesConfig
+                )
+            ).build(app)
+            community_records = obj_or_import_string(
+                app.config.get(
+                    "RDM_RECORDS_COMMUNITY_RECORDS_CONFIG_CLASS",
+                    RDMCommunityRecordsConfig,
+                )
+            ).build(app)
+            record_requests = obj_or_import_string(
+                app.config.get(
+                    "RDM_RECORDS_REQUESTS_CONFIG_CLASS", RDMRecordRequestsConfig
+                )
+            ).build(app)
 
         return ServiceConfigs
 
@@ -173,7 +221,9 @@ class InvenioRDMRecords(object):
         service_configs = self.service_configs(app)
 
         # Services
-        self.records_service = RDMRecordService(
+        self.records_service = obj_or_import_string(
+            app.config.get("RDM_RECORDS_SERVICE_CLASS", RDMRecordService)
+        )(
             service_configs.record,
             files_service=RDMFileService(service_configs.file),
             draft_files_service=RDMFileService(service_configs.file_draft),
@@ -182,110 +232,170 @@ class InvenioRDMRecords(object):
             review_service=ReviewService(service_configs.record),
         )
 
-        self.records_media_files_service = RDMRecordService(
+        self.records_media_files_service = obj_or_import_string(
+            app.config.get("RDM_RECORDS_SERVICE_CLASS", RDMRecordService)
+        )(
             service_configs.record_with_media_files,
             files_service=RDMFileService(service_configs.media_file),
             draft_files_service=RDMFileService(service_configs.media_file_draft),
             pids_service=PIDsService(service_configs.record, PIDManager),
         )
 
-        self.iiif_service = IIIFService(
-            records_service=self.records_service, config=None
-        )
+        self.iiif_service = obj_or_import_string(
+            app.config.get("RDM_RECORDS_IIIF_SERVICE_CLASS", IIIFService)
+        )(records_service=self.records_service, config=None)
 
-        self.record_communities_service = RecordCommunitiesService(
-            config=service_configs.record_communities,
-        )
+        self.record_communities_service = obj_or_import_string(
+            app.config.get(
+                "RDM_RECORDS_COMMUNITIES_SERVICE_CLASS", RecordCommunitiesService
+            )
+        )(config=service_configs.record_communities)
 
-        self.community_records_service = CommunityRecordsService(
-            config=service_configs.community_records,
-        )
+        self.community_records_service = obj_or_import_string(
+            app.config.get(
+                "RDM_RECORDS_COMMUNITY_RECORDS_SERVICE_CLASS", CommunityRecordsService
+            )
+        )(config=service_configs.community_records)
 
-        self.community_inclusion_service = CommunityInclusionService()
-        self.record_requests_service = RecordRequestsService(
-            config=service_configs.record_requests
-        )
+        self.community_inclusion_service = obj_or_import_string(
+            app.config.get(
+                "RDM_RECORDS_COMMUNITY_INCLUSION_SERVICE_CLASS",
+                CommunityInclusionService,
+            )
+        )()
 
-        self.oaipmh_server_service = OAIPMHServerService(
-            config=service_configs.oaipmh_server,
-        )
+        self.record_requests_service = obj_or_import_string(
+            app.config.get("RDM_RECORDS_REQUESTS_SERVICE_CLASS", RecordRequestsService)
+        )(config=service_configs.record_requests)
+
+        self.oaipmh_server_service = obj_or_import_string(
+            app.config.get(
+                "RDM_RECORDS_OAIPMH_SERVER_SERVICE_CLASS", OAIPMHServerService
+            )
+        )(config=service_configs.oaipmh_server)
 
     def init_resource(self, app):
         """Initialize resources."""
-        self.records_resource = RDMRecordResource(
+        self.records_resource = obj_or_import_string(
+            app.config.get("RDM_RECORDS_RESOURCE_CLASS", RDMRecordResource)
+        )(
             service=self.records_service,
             config=RDMRecordResourceConfig.build(app),
         )
 
         # Record files resource
-        self.record_files_resource = FileResource(
+        self.record_files_resource = obj_or_import_string(
+            app.config.get("RDM_RECORDS_FILES_RESOURCE_CLASS", FileResource)
+        )(
             service=self.records_service.files,
             config=RDMRecordFilesResourceConfig.build(app),
         )
 
         # Draft files resource
-        self.draft_files_resource = FileResource(
+        self.draft_files_resource = obj_or_import_string(
+            app.config.get("RDM_RECORDS_DRAFT_FILES_RESOURCE_CLASS", FileResource)
+        )(
             service=self.records_service.draft_files,
             config=RDMDraftFilesResourceConfig.build(app),
         )
 
-        self.record_media_files_resource = FileResource(
+        self.record_media_files_resource = obj_or_import_string(
+            app.config.get("RDM_RECORDS_MEDIA_FILES_RESOURCE_CLASS", FileResource)
+        )(
             service=self.records_media_files_service.files,
             config=RDMRecordMediaFilesResourceConfig.build(app),
         )
 
         # Draft files resource
-        self.draft_media_files_resource = FileResource(
+        self.draft_media_files_resource = obj_or_import_string(
+            app.config.get("RDM_RECORDS_DRAFT_MEDIA_FILES_RESOURCE_CLASS", FileResource)
+        )(
             service=self.records_media_files_service.draft_files,
             config=RDMDraftMediaFilesResourceConfig.build(app),
         )
 
         # Parent Records
-        self.parent_record_links_resource = RDMParentRecordLinksResource(
+        self.parent_record_links_resource = obj_or_import_string(
+            app.config.get(
+                "RDM_RECORDS_PARENT_RECORD_LINKS_RESOURCE_CLASS",
+                RDMParentRecordLinksResource,
+            )
+        )(
             service=self.records_service,
             config=RDMParentRecordLinksResourceConfig.build(app),
         )
 
-        self.parent_grants_resource = RDMParentGrantsResource(
+        self.parent_grants_resource = obj_or_import_string(
+            app.config.get(
+                "RDM_RECORDS_PARENT_GRANTS_RESOURCE_CLASS", RDMParentGrantsResource
+            )
+        )(
             service=self.records_service,
             config=RDMParentGrantsResourceConfig.build(app),
         )
 
-        self.grant_user_access_resource = RDMGrantsAccessResource(
+        self.grant_user_access_resource = obj_or_import_string(
+            app.config.get(
+                "RDM_RECORDS_GRANT_USER_ACCESS_RESOURCE_CLASS", RDMGrantsAccessResource
+            )
+        )(
             service=self.records_service,
             config=RDMGrantUserAccessResourceConfig.build(app),
         )
 
-        self.grant_group_access_resource = RDMGrantsAccessResource(
+        self.grant_group_access_resource = obj_or_import_string(
+            app.config.get(
+                "RDM_RECORDS_GRANT_GROUP_ACCESS_RESOURCE_CLASS", RDMGrantsAccessResource
+            )
+        )(
             service=self.records_service,
             config=RDMGrantGroupAccessResourceConfig.build(app),
         )
 
         # Record's communities
-        self.record_communities_resource = RDMRecordCommunitiesResource(
+        self.record_communities_resource = obj_or_import_string(
+            app.config.get(
+                "RDM_RECORDS_COMMUNITIES_RESOURCE_CLASS", RDMRecordCommunitiesResource
+            )
+        )(
             service=self.record_communities_service,
             config=RDMRecordCommunitiesResourceConfig.build(app),
         )
 
-        self.record_requests_resource = RDMRecordRequestsResource(
+        self.record_requests_resource = obj_or_import_string(
+            app.config.get(
+                "RDM_RECORDS_REQUESTS_RESOURCE_CLASS", RDMRecordRequestsResource
+            )
+        )(
             service=self.record_requests_service,
             config=RDMRecordRequestsResourceConfig.build(app),
         )
 
         # Community's records
-        self.community_records_resource = RDMCommunityRecordsResource(
+        self.community_records_resource = obj_or_import_string(
+            app.config.get(
+                "RDM_RECORDS_COMMUNITY_RECORDS_RESOURCE_CLASS",
+                RDMCommunityRecordsResource,
+            )
+        )(
             service=self.community_records_service,
             config=RDMCommunityRecordsResourceConfig.build(app),
         )
 
         # OAI-PMH
-        self.oaipmh_server_resource = OAIPMHServerResource(
+        self.oaipmh_server_resource = obj_or_import_string(
+            app.config.get(
+                "RDM_RECORDS_OAIPMH_SERVER_RESOURCE_CLASS", OAIPMHServerResource
+            )
+        )(
             service=self.oaipmh_server_service,
             config=OAIPMHServerResourceConfig.build(app),
         )
 
         # IIIF
-        self.iiif_resource = IIIFResource(
+        self.iiif_resource = obj_or_import_string(
+            app.config.get("RDM_RECORDS_IIIF_RESOURCE_CLASS", IIIFResource)
+        )(
             service=self.iiif_service,
             config=IIIFResourceConfig.build(app),
         )
