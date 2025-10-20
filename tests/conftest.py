@@ -413,6 +413,8 @@ def app_config(app_config, mock_datacite_client):
     app_config["RDM_REQUEST_RECORD_DELETION_ENABLED"] = True
     app_config["RDM_REQUEST_RECORD_DELETION_POLICIES"] = [RequestDeletionPolicy()]
 
+    app_config["RECORDS_RESOURCES_ZIP_FORMATS"] = [".zip"]
+
     return app_config
 
 

@@ -68,6 +68,8 @@ from requests import Request
 from werkzeug.local import LocalProxy
 
 from invenio_rdm_records.records.processors.tiles import TilesProcessor
+from invenio_rdm_records.services.files.extractors.zip import ZipExtractor
+from invenio_rdm_records.services.files.processors.zip import ZipProcessor
 
 from ..records import RDMDraft, RDMRecord
 from ..records.api import RDMDraftMediaFiles, RDMRecordMediaFiles
@@ -84,10 +86,9 @@ from .result_items import GrantItem, GrantList, SecretLinkItem, SecretLinkList
 from .results import RDMRecordList, RDMRecordRevisionsList
 from .schemas import RDMParentSchema, RDMRecordSchema
 from .schemas.community_records import CommunityRecordsSchema
-from .schemas.parent.access import AccessSettingsSchema
+from .schemas.parent.access import AccessSettingsSchema, RequestAccessSchema
 from .schemas.parent.access import Grant as GrantSchema
 from .schemas.parent.access import Grants as GrantsSchema
-from .schemas.parent.access import RequestAccessSchema
 from .schemas.parent.access import SecretLink as SecretLinkSchema
 from .schemas.parent.communities import CommunitiesSchema
 from .schemas.quota import QuotaSchema
@@ -546,6 +547,11 @@ class RDMFileRecordServiceConfig(FileServiceConfig, ConfiguratorMixin):
         "RDM_FILES_SERVICE_COMPONENTS", default=FileServiceConfig.components
     )
 
+    # TODO: change to FromConfig later
+    file_processors = [ZipProcessor()]
+
+    file_extractors = [ZipExtractor()]
+
 
 class RDMRecordServiceConfig(RecordServiceConfig, ConfiguratorMixin):
     """RDM record draft service config."""
@@ -925,6 +931,11 @@ class RDMFileDraftServiceConfig(FileServiceConfig, ConfiguratorMixin):
     components = FromConfig(
         "RDM_DRAFT_FILES_SERVICE_COMPONENTS", default=FileServiceConfig.components
     )
+
+    # TODO: change to FromConfig later
+    file_processors = [ZipProcessor()]
+
+    file_extractors = [ZipExtractor()]
 
 
 class RDMMediaFileDraftServiceConfig(FileServiceConfig, ConfiguratorMixin):
