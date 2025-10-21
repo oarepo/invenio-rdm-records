@@ -5,8 +5,8 @@
 # Invenio-RDM-Records is free software; you can redistribute it and/or modify
 # it under the terms of the MIT License; see LICENSE file for more details.
 
-"""File Service API."""
+"""File Service Processors API."""
 
-from invenio_rdm_records.services.files.processors import RecordingStream, ZipProcessor
+from ..processors.zip import RecordingStream, ZipProcessor
 
 __all__ = ("RecordingStream", "ZipProcessor")

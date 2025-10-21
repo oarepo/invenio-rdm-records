@@ -2,11 +2,11 @@ import base64
 import json
 import os
 import zipfile
-from io import BytesIO
 from pathlib import PurePosixPath
 
 from flask import Response, current_app
 from invenio_records_resources.services.files.extractors.base import FileExtractor
+from zipstream import ZIP_DEFLATED, ZipStream
 
 
 class StreamedZipEntry:
@@ -51,7 +51,11 @@ class StreamedZipEntry:
         return Response(
             generate(),
             mimetype=mime,
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": self.entry["size"],
+                "Content-Digest": f"{self.entry['crc']:08x}",  # ZIP spec stores the CRC-32 as a 32-bit unsigned integer
+            },
         )
 
     def _send_directory(self):
@@ -60,10 +64,9 @@ class StreamedZipEntry:
         zip_filename = f"{dir_name}.zip"
 
         def generate_zip():
-            # Use BytesIO to build the ZIP in memory
-            zip_buffer = BytesIO()
+            # Create ZipStream object
+            zs = ZipStream(compress_type=ZIP_DEFLATED)
 
-            # Open the source ZIP file
             with self.file_record.open_stream("rb") as fp:
                 with ReplyStream(
                     fp,
@@ -72,46 +75,37 @@ class StreamedZipEntry:
                     self.file_size,
                 ) as reply_stream:
                     with zipfile.ZipFile(reply_stream, "r") as source_zip:
-                        # Create a new ZIP file
-                        with zipfile.ZipFile(
-                            zip_buffer, "w", zipfile.ZIP_DEFLATED
-                        ) as target_zip:
-                            # Collect all files in this directory
-                            files_to_add = self._collect_files(self.entry)
+                        files_to_add = self._collect_files(self.entry)
 
-                            for file_info in files_to_add:
-                                full_path = file_info["full_key"]
-                                # Calculate relative path within the directory
-                                relative_path = full_path
-                                if full_path.startswith(self.entry["full_key"] + "/"):
-                                    relative_path = full_path[
-                                        len(self.entry["full_key"]) + 1 :
-                                    ]
+                        for file_info in files_to_add:
+                            full_path = file_info["full_key"]
+                            relative_path = full_path
+                            if full_path.startswith(self.entry["full_key"] + "/"):
+                                relative_path = full_path[
+                                    len(self.entry["full_key"]) + 1 :
+                                ]
 
-                                # Read file from source ZIP and write to target ZIP
-                                with source_zip.open(full_path, "r") as source_file:
-                                    # Stream in chunks to avoid loading entire file
-                                    chunk_size = 64 * 1024
-                                    file_data = BytesIO()
-                                    while True:
-                                        chunk = source_file.read(chunk_size)
-                                        if not chunk:
-                                            break
-                                        file_data.write(chunk)
+                            # Stream file content from source
+                            def make_generator(zip_ref, path):
+                                def generator():
+                                    with zip_ref.open(path, "r") as f:
+                                        chunk_size = 64 * 1024
+                                        while True:
+                                            chunk = f.read(chunk_size)
+                                            if not chunk:
+                                                break
+                                            yield chunk
 
-                                    target_zip.writestr(
-                                        relative_path, file_data.getvalue()
-                                    )
+                                return generator()
 
-            # After ZIP is complete, yield it in chunks
-            zip_buffer.seek(0)
-            chunk_size = 64 * 1024
-            while True:
-                chunk = zip_buffer.read(chunk_size)
-                if not chunk:
-                    break
-                yield chunk
+                            zs.add(
+                                data=make_generator(source_zip, full_path),
+                                arcname=relative_path,
+                            )
 
+                        yield from zs
+
+        # Cant calculate size here. Realistically zipstream can calculate size, but there will be no compression according to the docs
         return Response(
             generate_zip(),
             mimetype="application/zip",

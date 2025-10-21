@@ -7,8 +7,11 @@
 """Test RDM records files (metadata)."""
 
 import io
+import time
 import zipfile
 from pathlib import Path
+
+import psutil
 
 from invenio_rdm_records.proxies import current_rdm_records_service
 
@@ -45,7 +48,7 @@ def test_zip_file_listing(running_app, db, location, minimal_record, identity_si
     record = service.publish(identity_simple, draft.id)
 
     # Get file metadata
-    listing = file_service.get_container_listing(identity_simple, draft.id, "test.zip")
+    listing = file_service.list_container(identity_simple, draft.id, "test.zip")
     assert listing.to_dict() == {
         "entries": [
             {
@@ -59,8 +62,10 @@ def test_zip_file_listing(running_app, db, location, minimal_record, identity_si
                         "size": 12,
                         "compressed_size": 14,
                         "mime_type": "text/plain",
+                        "crc": 2962613731,
                     }
                 ],
+                "full_key": "test_zip",
             }
         ],
         "total": 1,
@@ -172,3 +177,148 @@ def test_zip_folder_extraction(
         with zip_ref.open("directory1-file2.txt") as f:
             content = f.read().decode("utf-8")
             assert content == "directory1-file2\n"
+
+
+def test_large_zip_folder_extraction(
+    running_app, db, location, minimal_record, identity_simple
+):
+    """Test extracting a folder from a large in-memory zip file."""
+    data = minimal_record.copy()
+    data["files"] = {"enabled": True}
+    data["media_files"] = {"enabled": True}
+    service = current_rdm_records_service
+    file_service = service.files
+
+    # Create draft
+    draft = service.create(identity_simple, data)
+
+    # Prepare metadata
+    metadata = {"type": "zip"}
+    service.draft_files.init_files(
+        identity_simple,
+        draft.id,
+        data=[
+            {
+                "key": "big_test_zip.zip",
+                "metadata": metadata,
+                "access": {"hidden": False},
+            }
+        ],
+    )
+
+    # Create a large zip in memory for simplicity
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+        zipf.writestr("big_test_zip/", "")
+
+        # Create multiple nested folders and files
+        for i in range(5):  # top-level folders
+            for j in range(10):  # subfolders
+                for k in range(20):  # files in each subfolder
+                    folder_path = f"folder_{i}/subfolder_{j}/"
+                    file_name = f"file_{k}.txt"
+                    content = f"This is file {k} in {folder_path}".encode("utf-8")
+                    zipf.writestr(folder_path + file_name, content)
+
+    zip_buffer.seek(0)
+
+    # Upload ZIP as file content
+    service.draft_files.set_file_content(
+        identity_simple, draft.id, "big_test_zip.zip", zip_buffer
+    )
+
+    service.draft_files.commit_file(identity_simple, draft.id, "big_test_zip.zip")
+
+    # Publish
+    record = service.publish(identity_simple, draft.id)
+
+    # Extract a specific folder from the zip
+    extracted = file_service.extract_from_container(
+        identity_simple,
+        draft.id,
+        "big_test_zip.zip",
+        "big_test_zip/folder_3/subfolder_7",  # some folder to extract
+    )
+
+    # Read the returned zip data
+    res = extracted.send_file()
+    data = b"".join(res.response)
+    zip_bytes = io.BytesIO(data)
+
+    # Verify extracted folder content
+    with zipfile.ZipFile(zip_bytes, "r") as zip_ref:
+        names = sorted(zip_ref.namelist())
+        assert len(names) == 20  # we added 20 files
+        # Check one file’s content
+        with zip_ref.open("file_0.txt") as f:
+            content = f.read().decode("utf-8")
+            assert "folder_3/subfolder_7" in content
+
+
+def test_large_zip_memory_usage(
+    running_app, db, location, minimal_record, identity_simple
+):
+    """Test that ZIP extraction is memory efficient."""
+    import os
+
+    process = psutil.Process(os.getpid())
+
+    data = minimal_record.copy()
+    data["files"] = {"enabled": True}
+    data["media_files"] = {"enabled": True}
+    service = current_rdm_records_service
+    file_service = service.files
+
+    draft = service.create(identity_simple, data)
+    metadata = {"type": "zip"}
+    service.draft_files.init_files(
+        identity_simple,
+        draft.id,
+        data=[
+            {"key": "huge_test.zip", "metadata": metadata, "access": {"hidden": False}}
+        ],
+    )
+
+    # Create a large zip in memory
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+        zipf.writestr("huge_test/", "")
+        # Add a few large files
+        for i in range(10):
+            zipf.writestr(f"huge_test/largefile_{i}.bin", b"x" * 50_000_000)
+    zip_buffer.seek(0)
+
+    service.draft_files.set_file_content(
+        identity_simple, draft.id, "huge_test.zip", zip_buffer
+    )
+    service.draft_files.commit_file(identity_simple, draft.id, "huge_test.zip")
+    record = service.publish(identity_simple, draft.id)
+
+    # Measure memory before extraction
+    mem_before = process.memory_info().rss
+
+    # Perform extraction
+    extracted = file_service.extract_from_container(
+        identity_simple,
+        draft.id,
+        "huge_test.zip",
+        "huge_test",  # entire zip
+    )
+    res = extracted.send_file()
+
+    # Read in streaming chunks
+    data_stream = io.BytesIO()
+    for chunk in res.response:
+        data_stream.write(chunk)
+        # simulate some delay and measure periodically
+        time.sleep(0.01)
+
+    mem_after = process.memory_info().rss
+    mem_diff_mb = (mem_after - mem_before) / (1024 * 1024)
+
+    print(
+        f"Memory before: {mem_before / 1e6:.1f} MB, after: {mem_after / 1e6:.1f} MB, diff: {mem_diff_mb:.2f} MB"
+    )
+
+    # Check memory growth is reasonable (<100 MB)
+    assert mem_diff_mb < 100, f"Extraction used too much memory: {mem_diff_mb:.2f} MB"

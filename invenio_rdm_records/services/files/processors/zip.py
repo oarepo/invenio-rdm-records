@@ -4,7 +4,7 @@ import mimetypes
 import os
 import zipfile
 from io import BytesIO
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from flask import current_app
 from invenio_db import db
@@ -101,6 +101,7 @@ class ZipProcessor(FileProcessor):
                             "compressed_size": info.compress_size,
                             "mime_type": mimetypes.guess_type(key)[0]
                             or "application/octet-stream",
+                            "crc": info.CRC,
                         }
                     )
 
@@ -121,8 +122,23 @@ class ZipProcessor(FileProcessor):
                             truncated = True
                             break
 
+                # Check if root is present (single top-level directory).
+                # If not, create a synthetic root. This ensures consistency and correct extraction
+                if len(toc_root) == 1 and toc_root[0]["type"] == "directory":
+                    # Root already exists, fine
+                    root_entry = toc_root[0]
+                else:
+                    # Create synthetic root if missing
+                    root_name = Path(file_record.key).stem
+                    root_entry = {
+                        "key": root_name,
+                        "type": "directory",
+                        "entries": toc_root,
+                        "full_key": root_name,
+                    }
+
                 return {
-                    "entries": toc_root,
+                    "entries": [root_entry],
                     "total": total_entries,
                     "truncated": truncated,
                     "toc": recorded_stream.toc(),
