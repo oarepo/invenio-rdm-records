@@ -10,6 +10,13 @@ from zipstream import ZIP_DEFLATED, ZipStream
 
 
 class StreamedZipEntry:
+    """Represents a file or directory that can be streamed from a ZIP archive.
+
+    This class handles streaming of both individual files and entire directories:
+    - For files: Streams the decompressed content directly
+    - For directories: Creates a new ZIP on-the-fly containing all files in that directory
+    """
+
     def __init__(self, file_record, entry, header_pos=0, header=b"", file_size=0):
         self.file_record = file_record
         self.entry = entry
@@ -18,16 +25,24 @@ class StreamedZipEntry:
         self.file_size = file_size
 
     def send_file(self):
-        """Return Flask response that streams file bytes."""
+        """
+        Generate a Flask Response that streams the file or directory.
+
+        This method returns different responses depending on the entry type:
+        - For files: Streams the decompressed file content
+        - For directories: Streams a newly created ZIP containing all files
+        """
         # Check if this is a directory
         if self.entry.get("type") == "directory":
             return self._send_directory()
 
+        # Single file extraction
         mime = self.entry.get("mime_type", "application/octet-stream")
         filename = self.entry["full_key"]
 
         # For files, stream the single file
         def generate():
+            """Generator that streams the file content in chunks."""
             # Wrap the underlying file stream in ReplyStream
             with self.file_record.open_stream("rb") as fp:
                 # Wrap the actual file object in ReplyStream
@@ -59,7 +74,14 @@ class StreamedZipEntry:
         )
 
     def _send_directory(self):
-        """Stream a directory as a new ZIP file."""
+        """
+        Stream an entire directory as a newly created ZIP file.
+
+        This method creates a new ZIP file on-the-fly containing all files from
+        the requested directory. It uses zipstream-ng library to avoid buffering the
+        entire ZIP in memory.
+
+        """
         dir_name = self.entry["key"]
         zip_filename = f"{dir_name}.zip"
 
@@ -75,10 +97,13 @@ class StreamedZipEntry:
                     self.file_size,
                 ) as reply_stream:
                     with zipfile.ZipFile(reply_stream, "r") as source_zip:
+                        # Collect all files in this directory
                         files_to_add = self._collect_files(self.entry)
 
                         for file_info in files_to_add:
                             full_path = file_info["full_key"]
+
+                            # Calculate relative path within the directory
                             relative_path = full_path
                             if full_path.startswith(self.entry["full_key"] + "/"):
                                 relative_path = full_path[
@@ -100,9 +125,10 @@ class StreamedZipEntry:
 
                             zs.add(
                                 data=make_generator(source_zip, full_path),
-                                arcname=relative_path,
+                                arcname=relative_path,  # under which name it will be stored in the zip
                             )
 
+                        # Stream the generated ZIP file
                         yield from zs
 
         # Cant calculate size here. Realistically zipstream can calculate size, but there will be no compression according to the docs
@@ -129,6 +155,15 @@ class StreamedZipEntry:
 
 
 class ZipExtractor(FileExtractor):
+    """
+    Extractor for ZIP files that uses the pre-built table of contents for efficient extraction.
+
+    This extractor leverages the cached TOC created by ZipProcessor to:
+    - Quickly locate files without scanning the entire ZIP
+    - Stream individual files without loading them fully into memory
+    - Create directory ZIPs on-the-fly without buffering in memory
+    """
+
     def can_process(self, file_record):
         """Determine if this extractor can process a given file record."""
         return (
@@ -152,30 +187,35 @@ class ZipExtractor(FileExtractor):
         return None
 
     def list(self, file_record):
-        """Return a listing of the file."""
+        """Return the cached table of contents for the ZIP file."""
         listing_file = file_record.record.media_files.get(f"{file_record.key}.listing")
 
         if listing_file:
             with listing_file.file.storage().open("rb") as f:
                 listing = json.load(f)
-                listing.pop("toc", None)  # remove toc if present
+                # Remove the internal TOC data (byte ranges) as it's not useful for clients
+                listing.pop("toc", None)
                 return listing
         return {}
 
     def extract(self, file_record, path):
         """Extract a specific file or directory from the file record."""
+        # extract path parts to find the correct entry later
         parts = list(PurePosixPath(path).parts)
 
+        # Load the cached table of contents
         listing_file = file_record.record.media_files.get(f"{file_record.key}.listing")
         with listing_file.file.storage().open("rb") as f:
             listing = json.load(f)
 
+        # Find the requested entry in the TOC
         entry = self._find_entry(listing.get("entries", []), parts)
         toc = listing.get("toc", {})
 
         if not entry:
             raise FileNotFoundError(f"Path '{path}' not found in listing.")
 
+        # Create a streamed entry that can generate the response
         return StreamedZipEntry(
             file_record,
             entry,

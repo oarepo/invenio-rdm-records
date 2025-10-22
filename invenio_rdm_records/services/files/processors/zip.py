@@ -12,7 +12,18 @@ from invenio_records_resources.services.files.processors.base import FileProcess
 
 
 class ZipProcessor(FileProcessor):
-    """Processor for handling ZIP files."""
+    """
+    Processor for ZIP files that builds and caches a hierarchical table of contents.
+
+    When a ZIP file is uploaded, this processor:
+    1. Reads the ZIP's central directory to extract metadata
+    2. Builds a hierarchical tree structure of all files and directories
+    3. Records the byte range of the central directory for efficient later access
+    4. Stores this information as a ".listing" file alongside the original ZIP
+
+    This preprocessing step enables efficient extraction later without re-reading
+    the entire ZIP file.
+    """
 
     def can_process(self, file_record):
         """Determine if this processor can process a given file record."""
@@ -22,7 +33,7 @@ class ZipProcessor(FileProcessor):
         )
 
     def process(self, file_record):
-        """Process a file."""
+        """Process the uploaded ZIP file by building and caching its table of contents."""
         file_record.record.media_files.enabled = True
 
         if not file_record.record.media_files.bucket:
@@ -60,9 +71,49 @@ class ZipProcessor(FileProcessor):
             )
 
     def _build_zip_toc(self, file_record, max_entries=None):
-        """Construct hierarchical TOC for ZIP file."""
+        """Construct a hierarchical table of contents from the ZIP file.
+
+        This method reads the ZIP's central directory and builds a tree structure
+        containing:
+        - Hierarchical directory structure
+        - File metadata (size, compressed size, CRC32, MIME type)
+        - Byte range of the central directory (for efficient later access)
+
+        It is possible to truncate the listing if max_entries is set.
+
+        Example structure:
+        {
+             "entries": [
+            {
+                "key": "test_zip",
+                "type": "directory",
+                "entries": [
+                    {
+                        "key": "test1.txt",
+                        "type": "file",
+                        "full_key": "test_zip/test1.txt",
+                        "size": 12,
+                        "compressed_size": 14,
+                        "mime_type": "text/plain",
+                        "crc": 2962613731,
+                    }
+                ],
+                "full_key": "test_zip",
+            }
+            ],
+            "total": 1,
+            "truncated": False,
+        }
+        """
 
         def insert_entry(root, parts, info, current_path=""):
+            """
+            Recursively insert a file entry into the hierarchical tree.
+
+            This function builds a directory tree by recursively processing path
+            components. For example, "dir1/dir2/file.txt" will create:
+            dir1 -> dir2 -> file.txt
+            """
             if not parts:
                 return
 
@@ -109,9 +160,12 @@ class ZipProcessor(FileProcessor):
         total_entries = 0
         truncated = False
 
+        # Open the ZIP file and wrap it in RecordingStream to track byte ranges
         with file_record.open_stream("rb") as fp:
             with RecordingStream.open(fp) as recorded_stream:
                 with zipfile.ZipFile(recorded_stream) as zf:
+                    # Iterate through all entries in the ZIP's central directory
+                    # Recording Stream will capture byte range accessed
                     for info in zf.infolist():
                         if info.filename.endswith("/"):
                             continue
@@ -128,7 +182,7 @@ class ZipProcessor(FileProcessor):
                     # Root already exists, fine
                     root_entry = toc_root[0]
                 else:
-                    # Create synthetic root if missing
+                    # Create a synthetic root named after the ZIP file
                     root_name = Path(file_record.key).stem
                     root_entry = {
                         "key": root_name,
@@ -141,11 +195,13 @@ class ZipProcessor(FileProcessor):
                     "entries": [root_entry],
                     "total": total_entries,
                     "truncated": truncated,
-                    "toc": recorded_stream.toc(),
+                    "toc": recorded_stream.toc(),  # byte range of central directory
                 }
 
 
 class RecordingStream:
+    """A wrapper around a file stream that records the byte ranges accessed."""
+
     def __init__(self, fp):
         self.fp = fp
         self.min_offset = None
@@ -162,6 +218,12 @@ class RecordingStream:
         pass
 
     def seek(self, offset, whence=os.SEEK_SET):
+        """
+        Seek to a position and record the byte offset.
+
+        This method tracks the minimum and maximum byte offsets accessed.
+        """
+
         self.fp.seek(offset, whence)
 
         actual_pos = self.fp.tell()
@@ -178,6 +240,8 @@ class RecordingStream:
         return self.fp.read(size)
 
     def toc(self):
+        """Return the recorded byte range as a table of contents entry."""
+
         if self.min_offset is None:
             return {"content": base64.b64encode(b""), "min_offset": None}
 
