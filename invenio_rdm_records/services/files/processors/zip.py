@@ -34,12 +34,16 @@ class ZipProcessor(FileProcessor):
 
     def process(self, file_record):
         """Process the uploaded ZIP file by building and caching its table of contents."""
-        file_record.record.media_files.enabled = True
+        record = file_record.record
 
-        if not file_record.record.media_files.bucket:
-            file_record.record.media_files.create_bucket()
+        if record.media_files.enabled is False:
+            record.media_files.enabled = True
 
-        listing_file = file_record.record.media_files.get(f"{file_record.key}.listing")
+            if not record.media_files.bucket:
+                record.media_files.create_bucket()
+            record.commit()
+
+        listing_file = record.media_files.get(f"{file_record.key}.listing")
 
         if listing_file:
             return  # already processed
@@ -53,12 +57,12 @@ class ZipProcessor(FileProcessor):
             with db.session.begin_nested():
                 # Check and create a media file if it doesn't exist
                 if listing_file is None:
-                    listing_file = file_record.record.media_files.create(
+                    listing_file = record.media_files.create(
                         f"{file_record.key}.listing",
                         stream=toc_stream,
                     )
 
-                file_record.record.media_files.commit(f"{file_record.key}.listing")
+                record.media_files.commit(f"{file_record.key}.listing")
 
         except Exception:
             # Nested transaction for current file is rolled back

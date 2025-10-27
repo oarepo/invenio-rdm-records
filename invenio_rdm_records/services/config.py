@@ -547,10 +547,9 @@ class RDMFileRecordServiceConfig(FileServiceConfig, ConfiguratorMixin):
         "RDM_FILES_SERVICE_COMPONENTS", default=FileServiceConfig.components
     )
 
-    # TODO: change to FromConfig later
-    file_processors = [ZipProcessor()]
+    file_processors = FileServiceConfig.file_processors + [ZipProcessor()]
 
-    file_extractors = [ZipExtractor()]
+    file_extractors = FileServiceConfig.file_extractors + [ZipExtractor()]
 
 
 class RDMRecordServiceConfig(RecordServiceConfig, ConfiguratorMixin):
@@ -932,10 +931,9 @@ class RDMFileDraftServiceConfig(FileServiceConfig, ConfiguratorMixin):
         "RDM_DRAFT_FILES_SERVICE_COMPONENTS", default=FileServiceConfig.components
     )
 
-    # TODO: change to FromConfig later
-    file_processors = [ZipProcessor()]
+    file_processors = FileServiceConfig.file_processors + [ZipProcessor()]
 
-    file_extractors = [ZipExtractor()]
+    file_extractors = FileServiceConfig.file_extractors + [ZipExtractor()]
 
 
 class RDMMediaFileDraftServiceConfig(FileServiceConfig, ConfiguratorMixin):

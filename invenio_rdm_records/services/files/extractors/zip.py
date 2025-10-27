@@ -1,7 +1,9 @@
 import base64
+import io
 import json
 import os
 import zipfile
+from os.path import basename
 from pathlib import PurePosixPath
 
 from flask import Response, current_app
@@ -39,37 +41,39 @@ class StreamedZipEntry:
         # Single file extraction
         mime = self.entry.get("mime_type", "application/octet-stream")
         filename = self.entry["full_key"]
+        app = current_app._get_current_object()
 
         # For files, stream the single file
         def generate():
             """Generator that streams the file content in chunks."""
-            # Wrap the underlying file stream in ReplyStream
-            with self.file_record.open_stream("rb") as fp:
-                # Wrap the actual file object in ReplyStream
-                with ReplyStream(
-                    fp,
-                    self.header_pos,
-                    self.header,
-                    self.file_size,
-                ) as reply_stream:
-                    # Open as a ZipFile using your wrapper
-                    with zipfile.ZipFile(reply_stream) as zf:
-                        with zf.open(self.entry["full_key"], "r") as extracted:
-                            # Stream the extracted file in chunks
-                            chunk_size = 64 * 1024
-                            while True:
-                                chunk = extracted.read(chunk_size)
-                                if not chunk:
-                                    break
-                                yield chunk
+            with app.app_context():
+                # Wrap the underlying file stream in ReplyStream
+                with self.file_record.open_stream("rb") as fp:
+                    # Wrap the actual file object in ReplyStream
+                    with ReplyStream(
+                        fp,
+                        self.header_pos,
+                        self.header,
+                        self.file_size,
+                    ) as reply_stream:
+                        # Open as a ZipFile using your wrapper
+                        with zipfile.ZipFile(reply_stream) as zf:
+                            with zf.open(self.entry["full_key"], "r") as extracted:
+                                # Stream the extracted file in chunks
+                                chunk_size = 64 * 1024
+                                while True:
+                                    chunk = extracted.read(chunk_size)
+                                    if not chunk:
+                                        break
+
+                                    yield chunk
 
         return Response(
             generate(),
             mimetype=mime,
             headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                "Content-Length": self.entry["size"],
-                "Content-Digest": f"{self.entry['crc']:08x}",  # ZIP spec stores the CRC-32 as a 32-bit unsigned integer
+                "Content-Disposition": f'attachment; filename="{basename(filename)}"',
+                "Content-Length": str(self.entry["size"]),
             },
         )
 
@@ -84,52 +88,53 @@ class StreamedZipEntry:
         """
         dir_name = self.entry["key"]
         zip_filename = f"{dir_name}.zip"
+        app = current_app._get_current_object()
 
         def generate_zip():
             # Create ZipStream object
             zs = ZipStream(compress_type=ZIP_DEFLATED)
+            with app.app_context():
+                with self.file_record.open_stream("rb") as fp:
+                    with ReplyStream(
+                        fp,
+                        self.header_pos,
+                        self.header,
+                        self.file_size,
+                    ) as reply_stream:
+                        with zipfile.ZipFile(reply_stream, "r") as source_zip:
+                            # Collect all files in this directory
+                            files_to_add = self._collect_files(self.entry)
 
-            with self.file_record.open_stream("rb") as fp:
-                with ReplyStream(
-                    fp,
-                    self.header_pos,
-                    self.header,
-                    self.file_size,
-                ) as reply_stream:
-                    with zipfile.ZipFile(reply_stream, "r") as source_zip:
-                        # Collect all files in this directory
-                        files_to_add = self._collect_files(self.entry)
+                            for file_info in files_to_add:
+                                full_path = file_info["full_key"]
 
-                        for file_info in files_to_add:
-                            full_path = file_info["full_key"]
+                                # Calculate relative path within the directory
+                                relative_path = full_path
+                                if full_path.startswith(self.entry["full_key"] + "/"):
+                                    relative_path = full_path[
+                                        len(self.entry["full_key"]) + 1 :
+                                    ]
 
-                            # Calculate relative path within the directory
-                            relative_path = full_path
-                            if full_path.startswith(self.entry["full_key"] + "/"):
-                                relative_path = full_path[
-                                    len(self.entry["full_key"]) + 1 :
-                                ]
+                                # Stream file content from source
+                                def make_generator(zip_ref, path):
+                                    def generator():
+                                        with zip_ref.open(path, "r") as f:
+                                            chunk_size = 64 * 1024
+                                            while True:
+                                                chunk = f.read(chunk_size)
+                                                if not chunk:
+                                                    break
+                                                yield chunk
 
-                            # Stream file content from source
-                            def make_generator(zip_ref, path):
-                                def generator():
-                                    with zip_ref.open(path, "r") as f:
-                                        chunk_size = 64 * 1024
-                                        while True:
-                                            chunk = f.read(chunk_size)
-                                            if not chunk:
-                                                break
-                                            yield chunk
+                                    return generator()
 
-                                return generator()
+                                zs.add(
+                                    data=make_generator(source_zip, full_path),
+                                    arcname=relative_path,  # under which name it will be stored in the zip
+                                )
 
-                            zs.add(
-                                data=make_generator(source_zip, full_path),
-                                arcname=relative_path,  # under which name it will be stored in the zip
-                            )
-
-                        # Stream the generated ZIP file
-                        yield from zs
+                            # Stream the generated ZIP file
+                            yield from zs
 
         # Cant calculate size here. Realistically zipstream can calculate size, but there will be no compression according to the docs
         return Response(
@@ -198,13 +203,18 @@ class ZipExtractor(FileExtractor):
                 return listing
         return {}
 
-    def extract(self, file_record, path):
-        """Extract a specific file or directory from the file record."""
-        # extract path parts to find the correct entry later
+    def _get_entry_and_toc(self, file_record, path):
+        """Load listing and return (entry, toc).
+
+        Raises FileNotFoundError if listing or entry is not found.
+        """
         parts = list(PurePosixPath(path).parts)
 
         # Load the cached table of contents
         listing_file = file_record.record.media_files.get(f"{file_record.key}.listing")
+        if not listing_file:
+            raise FileNotFoundError(f"Listing file not found in {file_record.key}.")
+
         with listing_file.file.storage().open("rb") as f:
             listing = json.load(f)
 
@@ -215,6 +225,12 @@ class ZipExtractor(FileExtractor):
         if not entry:
             raise FileNotFoundError(f"Path '{path}' not found in listing.")
 
+        return entry, toc
+
+    def extract(self, file_record, path):
+        """Extract a specific file or directory from the file record."""
+        # Load entry from listing and its toc
+        entry, toc = self._get_entry_and_toc(file_record, path)
         # Create a streamed entry that can generate the response
         return StreamedZipEntry(
             file_record,
@@ -223,6 +239,133 @@ class ZipExtractor(FileExtractor):
             base64.b64decode(toc.get("content", b"")),
             toc.get("max_offset", 0),
         )
+
+    def open(self, file_record, path):
+        """Open a specific file from the file record and return a
+        readable stream that remains open until the caller closes it.
+
+        """
+        # Load entry from listing and its toc
+        entry, toc = self._get_entry_and_toc(file_record, path)
+
+        # prepare header and offsets
+        header_pos = toc.get("min_offset", 0)
+        header_b64 = toc.get("content", "") or ""
+        header = base64.b64decode(header_b64) if header_b64 else b""
+        file_size = toc.get("max_offset", 0)
+
+        # file_record.open_stream() returns a context manager. We need the
+        # actual underlying file-like object that supports `seek`/`read`.
+        # Enter the context manually and keep the context manager so we can
+        # close it later when the returned object is closed.
+        fp_cm = file_record.open_stream("rb")
+        fp = fp_cm.__enter__()
+
+        # Wrap in our ReplyStream which provides correct seeking/read behavior
+        reply_stream = ReplyStream(fp, header_pos, header, file_size)
+
+        # Create ZipFile on top of reply_stream. Keep references so they
+        # remain alive while caller uses the returned object.
+        zf = zipfile.ZipFile(reply_stream, "r")
+        extracted = zf.open(entry["full_key"], "r")
+
+        # Return the OpenedZipEntry and keep a reference to the context manager
+        # so it can be closed when the user closes the returned object.
+        return OpenedZipEntry(extracted, zf, reply_stream, fp, fp_cm)
+
+
+class OpenedZipEntry(io.IOBase):
+    """A thin wrapper around a ZipExtFile that keeps ZipFile and streams alive."""
+
+    def __init__(
+        self,
+        extracted,
+        zipfile_obj,
+        reply_stream,
+        underlying_stream,
+        underlying_cm=None,
+    ):
+        self._extracted = extracted
+        self._zf = zipfile_obj
+        self._reply = reply_stream
+        # underlying_stream is the actual file-like object
+        self._fp = underlying_stream
+        # underlying_cm is the context manager returned by file_record.open_stream
+        # (so we can call __exit__ on close). It may be None if the caller
+        # provided a raw stream.
+        self._fp_cm = underlying_cm
+
+    def readable(self):
+        return True
+
+    def writable(self):
+        return False
+
+    def seekable(self):
+        return hasattr(self._extracted, "seek")
+
+    def read(self, *args, **kwargs):
+        return self._extracted.read(*args, **kwargs)
+
+    def readline(self, *args, **kwargs):
+        return self._extracted.readline(*args, **kwargs)
+
+    def seek(self, *args, **kwargs):
+        return getattr(self._extracted, "seek", lambda *a, **k: None)(*args, **kwargs)
+
+    def tell(self, *args, **kwargs):
+        return getattr(self._extracted, "tell", lambda *a, **k: None)(*args, **kwargs)
+
+    def __iter__(self):
+        return iter(self._extracted)
+
+    def __next__(self):
+        return next(self._extracted)
+
+    def close(self):
+        """Close extracted stream, ZipFile and underlying stream (in that order)."""
+        # Close extracted first
+        try:
+            self._extracted.close()
+        except Exception:
+            pass
+
+        # Then close the ZipFile
+        try:
+            self._zf.close()
+        except Exception:
+            pass
+
+        # Finally close the underlying storage stream
+        try:
+            if hasattr(self._fp, "close"):
+                self._fp.close()
+        except Exception:
+            pass
+
+        # If we have a context manager, ensure we exit it so resources are properly released.
+        try:
+            if self._fp_cm is not None:
+                self._fp_cm.__exit__(None, None, None)
+        except Exception:
+            pass
+
+        # Drop references
+        self._extracted = None
+        self._zf = None
+        self._reply = None
+        self._fp = None
+        self._fp_cm = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
+    def __getattr__(self, name):
+        # Forward any unknown attribute to the underlying extracted file
+        return getattr(self._extracted, name)
 
 
 class ReplyStream:
