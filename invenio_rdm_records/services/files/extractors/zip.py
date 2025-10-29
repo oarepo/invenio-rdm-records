@@ -1,5 +1,4 @@
 import base64
-import io
 import json
 import os
 import zipfile
@@ -9,6 +8,9 @@ from pathlib import PurePosixPath
 from flask import Response, current_app, stream_with_context
 from invenio_records_resources.services.files.extractors.base import FileExtractor
 from zipstream import ZIP_DEFLATED, ZipStream
+
+from .opened_entry import OpenedArchiveEntry
+from .reply_stream import ReplyStream
 
 
 class StreamedZipEntry:
@@ -111,47 +113,46 @@ class StreamedZipEntry:
             # Create ZipStream object
             zs = ZipStream(compress_type=ZIP_DEFLATED)
             try:
-                with self.file_record.open_stream("rb") as fp:
-                    with ReplyStream(
-                        fp,
-                        self.header_pos,
-                        self.header,
-                        self.file_size,
-                    ) as reply_stream:
-                        with zipfile.ZipFile(reply_stream, "r") as source_zip:
-                            # Collect all files in this directory
-                            files_to_add = self._collect_files(self.entry)
+                with ReplyStream(
+                    fp,
+                    self.header_pos,
+                    self.header,
+                    self.file_size,
+                ) as reply_stream:
+                    with zipfile.ZipFile(reply_stream, "r") as source_zip:
+                        # Collect all files in this directory
+                        files_to_add = self._collect_files(self.entry)
 
-                            for file_info in files_to_add:
-                                full_path = file_info["full_key"]
+                        for file_info in files_to_add:
+                            full_path = file_info["full_key"]
 
-                                # Calculate relative path within the directory
-                                relative_path = full_path
-                                if full_path.startswith(self.entry["full_key"] + "/"):
-                                    relative_path = full_path[
-                                        len(self.entry["full_key"]) + 1 :
-                                    ]
+                            # Calculate relative path within the directory
+                            relative_path = full_path
+                            if full_path.startswith(self.entry["full_key"] + "/"):
+                                relative_path = full_path[
+                                    len(self.entry["full_key"]) + 1 :
+                                ]
 
-                                # Stream file content from source
-                                def make_generator(zip_ref, path):
-                                    def generator():
-                                        with zip_ref.open(path, "r") as f:
-                                            chunk_size = 64 * 1024
-                                            while True:
-                                                chunk = f.read(chunk_size)
-                                                if not chunk:
-                                                    break
-                                                yield chunk
+                            # Stream file content from source
+                            def make_generator(zip_ref, path):
+                                def generator():
+                                    with zip_ref.open(path, "r") as f:
+                                        chunk_size = 64 * 1024
+                                        while True:
+                                            chunk = f.read(chunk_size)
+                                            if not chunk:
+                                                break
+                                            yield chunk
 
-                                    return generator()
+                                return generator()
 
-                                zs.add(
-                                    data=make_generator(source_zip, full_path),
-                                    arcname=relative_path,  # under which name it will be stored in the zip
-                                )
+                            zs.add(
+                                data=make_generator(source_zip, full_path),
+                                arcname=relative_path,  # under which name it will be stored in the zip
+                            )
 
-                            # Stream the generated ZIP file
-                            yield from zs
+                        # Stream the generated ZIP file
+                        yield from zs
             finally:
                 # ensure we close the underlying storage stream
                 try:
@@ -293,200 +294,6 @@ class ZipExtractor(FileExtractor):
         zf = zipfile.ZipFile(reply_stream, "r")
         extracted = zf.open(entry["full_key"], "r")
 
-        # Return the OpenedZipEntry and keep a reference to the context manager
+        # Return the OpenedArchiveEntry and keep a reference to the context manager
         # so it can be closed when the user closes the returned object.
-        return OpenedZipEntry(extracted, zf, reply_stream, fp, fp_cm)
-
-
-class OpenedZipEntry(io.IOBase):
-    """A thin wrapper around a ZipExtFile that keeps ZipFile and streams alive."""
-
-    def __init__(
-        self,
-        extracted,
-        zipfile_obj,
-        reply_stream,
-        underlying_stream,
-        underlying_cm=None,
-    ):
-        self._extracted = extracted
-        self._zf = zipfile_obj
-        self._reply = reply_stream
-        # underlying_stream is the actual file-like object
-        self._fp = underlying_stream
-        # underlying_cm is the context manager returned by file_record.open_stream
-        # (so we can call __exit__ on close). It may be None if the caller
-        # provided a raw stream.
-        self._fp_cm = underlying_cm
-
-    def readable(self):
-        return True
-
-    def writable(self):
-        return False
-
-    def seekable(self):
-        return hasattr(self._extracted, "seek")
-
-    def read(self, *args, **kwargs):
-        return self._extracted.read(*args, **kwargs)
-
-    def readline(self, *args, **kwargs):
-        return self._extracted.readline(*args, **kwargs)
-
-    def seek(self, *args, **kwargs):
-        return getattr(self._extracted, "seek", lambda *a, **k: None)(*args, **kwargs)
-
-    def tell(self, *args, **kwargs):
-        return getattr(self._extracted, "tell", lambda *a, **k: None)(*args, **kwargs)
-
-    def __iter__(self):
-        return iter(self._extracted)
-
-    def __next__(self):
-        return next(self._extracted)
-
-    def close(self):
-        """Close extracted stream, ZipFile and underlying stream (in that order)."""
-        # Close extracted first
-        try:
-            self._extracted.close()
-        except Exception:
-            pass
-
-        # Then close the ZipFile
-        try:
-            self._zf.close()
-        except Exception:
-            pass
-
-        # Finally close the underlying storage stream
-        try:
-            if hasattr(self._fp, "close"):
-                self._fp.close()
-        except Exception:
-            pass
-
-        # If we have a context manager, ensure we exit it so resources are properly released.
-        try:
-            if self._fp_cm is not None:
-                self._fp_cm.__exit__(None, None, None)
-        except Exception:
-            pass
-
-        # Drop references
-        self._extracted = None
-        self._zf = None
-        self._reply = None
-        self._fp = None
-        self._fp_cm = None
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        self.close()
-
-    def __getattr__(self, name):
-        # Forward any unknown attribute to the underlying extracted file
-        return getattr(self._extracted, name)
-
-
-class ReplyStream:
-    def __init__(self, self_stream, header_pos, header, file_size):
-        self.self_stream = self_stream
-        self.header_pos = header_pos
-        self.header = header
-        self.header_len = len(header)
-        self.current_pos = 0
-        self.file_size = file_size
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        pass
-
-    def seekable(self):
-        """Return whether the stream is seekable."""
-        return True
-
-    def readable(self):
-        """Return whether the stream is readable."""
-        return True
-
-    def writable(self):
-        """Return whether the stream is writable."""
-        return False
-
-    def seek(self, offset, whence=os.SEEK_SET):
-        match whence:
-            case os.SEEK_SET:
-                self.current_pos = offset
-            case os.SEEK_CUR:
-                self.current_pos = self.current_pos + offset
-            case os.SEEK_END:
-                self.current_pos = self.file_size + offset
-            case _:
-                raise ValueError("Invalid value for 'whence'.")
-
-        # Only seek in the underlying stream if we're reading outside the cached header region
-        if self.current_pos < self.header_pos:
-            # Before the cached region - seek in underlying stream
-            self.self_stream.seek(self.current_pos, os.SEEK_SET)
-        elif self.current_pos >= self.header_pos + self.header_len:
-            # After the cached region - seek in underlying stream
-            self.self_stream.seek(self.current_pos, os.SEEK_SET)
-        # else: within the cached header region, no need to seek in underlying stream
-
-        return self.current_pos
-
-    def read(self, size=-1):
-        """Read up to size bytes from the stream.
-
-        Check if the read spans the cached header region and read accordingly.
-        """
-        if size == -1:
-            size = self.file_size - self.current_pos
-
-        if size <= 0:
-            return b""
-
-        result = b""
-        bytes_to_read = size
-
-        while bytes_to_read > 0:
-            # Before cached header
-            if self.current_pos < self.header_pos:
-                chunk_size = min(bytes_to_read, self.header_pos - self.current_pos)
-                chunk = self.self_stream.read(chunk_size)
-                result += chunk
-                self.current_pos += len(chunk)
-                bytes_to_read -= len(chunk)
-
-                if len(chunk) < chunk_size:
-                    break
-
-            # Within cached header
-            elif self.current_pos < self.header_pos + self.header_len:
-                header_offset = self.current_pos - self.header_pos
-                chunk_size = min(bytes_to_read, self.header_len - header_offset)
-                chunk = self.header[header_offset : header_offset + chunk_size]
-                result += chunk
-                self.current_pos += len(chunk)
-                bytes_to_read -= len(chunk)
-
-            # After cached header
-            else:
-                chunk = self.self_stream.read(bytes_to_read)
-                result += chunk
-                self.current_pos += len(chunk)
-                bytes_to_read -= len(chunk)
-
-                if len(chunk) == 0:
-                    break
-
-        return result
-
-    def tell(self):
-        return self.current_pos
+        return OpenedArchiveEntry(extracted, zf, reply_stream, fp, fp_cm)
