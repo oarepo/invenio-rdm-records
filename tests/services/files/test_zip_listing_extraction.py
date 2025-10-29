@@ -322,3 +322,178 @@ def test_large_zip_memory_usage(
 
     # Check memory growth is reasonable (<100 MB)
     assert mem_diff_mb < 100, f"Extraction used too much memory: {mem_diff_mb:.2f} MB"
+
+
+def test_zip_listing_resource(
+    running_app, db, location, minimal_record, identity_simple, client
+):
+    data = minimal_record.copy()
+    data["files"] = {"enabled": True}
+    data["media_files"] = {"enabled": True}
+    service = current_rdm_records_service
+
+    file_service = service.files
+
+    # Create
+    draft = service.create(identity_simple, data)
+
+    # Initialize files and add valid metadata
+    metadata = {
+        "type": "zip",
+    }
+    service.draft_files.init_files(
+        identity_simple,
+        draft.id,
+        data=[{"key": "test.zip", "metadata": metadata, "access": {"hidden": False}}],
+    )
+
+    zip_path = Path(__file__).parent.parent / "data" / "test_zip.zip"
+    with open(zip_path, "rb") as f:
+        service.draft_files.set_file_content(identity_simple, draft.id, "test.zip", f)
+
+    service.draft_files.commit_file(identity_simple, draft.id, "test.zip")
+
+    # Publish the record
+    record = service.publish(identity_simple, draft.id)
+
+    res = client.get(
+        f"/records/{draft.id}/files/test.zip/container",
+        headers={
+            "content-type": "application/json",
+        },
+    )
+    assert res.status_code == 200
+    assert res.json == {
+        "entries": [
+            {
+                "key": "test_zip",
+                "type": "directory",
+                "entries": [
+                    {
+                        "key": "test1.txt",
+                        "type": "file",
+                        "full_key": "test_zip/test1.txt",
+                        "size": 12,
+                        "compressed_size": 14,
+                        "mime_type": "text/plain",
+                        "crc": 2962613731,
+                    }
+                ],
+                "full_key": "test_zip",
+            }
+        ],
+        "total": 1,
+        "truncated": False,
+    }
+
+
+def test_zip_file_extract_resource(
+    running_app, db, location, minimal_record, identity_simple, client
+):
+    data = minimal_record.copy()
+    data["files"] = {"enabled": True}
+    data["media_files"] = {"enabled": True}
+    service = current_rdm_records_service
+
+    file_service = service.files
+
+    # Create
+    draft = service.create(identity_simple, data)
+
+    # Initialize files and add valid metadata
+    metadata = {
+        "type": "zip",
+    }
+    service.draft_files.init_files(
+        identity_simple,
+        draft.id,
+        data=[
+            {
+                "key": "test_directory_zip.zip",
+                "metadata": metadata,
+                "access": {"hidden": False},
+            }
+        ],
+    )
+
+    zip_path = Path(__file__).parent.parent / "data" / "test_directory_zip.zip"
+    with open(zip_path, "rb") as f:
+        service.draft_files.set_file_content(
+            identity_simple, draft.id, "test_directory_zip.zip", f
+        )
+
+    service.draft_files.commit_file(identity_simple, draft.id, "test_directory_zip.zip")
+
+    # Publish the record
+    record = service.publish(identity_simple, draft.id)
+
+    res = client.get(
+        f"/records/{draft.id}/files/test_directory_zip.zip/container/test_directory_zip/directory1/directory1-file1.txt",
+        headers={
+            "content-type": "application/json",
+        },
+    )
+    assert res.status_code == 200
+    assert res.data == b"directory1-file1\n"
+
+
+def test_zip_folder_extract_resource(
+    running_app, db, location, minimal_record, identity_simple, client
+):
+    data = minimal_record.copy()
+    data["files"] = {"enabled": True}
+    data["media_files"] = {"enabled": True}
+    service = current_rdm_records_service
+
+    file_service = service.files
+
+    # Create
+    draft = service.create(identity_simple, data)
+
+    # Initialize files and add valid metadata
+    metadata = {
+        "type": "zip",
+    }
+    service.draft_files.init_files(
+        identity_simple,
+        draft.id,
+        data=[
+            {
+                "key": "test_directory_zip.zip",
+                "metadata": metadata,
+                "access": {"hidden": False},
+            }
+        ],
+    )
+
+    zip_path = Path(__file__).parent.parent / "data" / "test_directory_zip.zip"
+    with open(zip_path, "rb") as f:
+        service.draft_files.set_file_content(
+            identity_simple, draft.id, "test_directory_zip.zip", f
+        )
+
+    service.draft_files.commit_file(identity_simple, draft.id, "test_directory_zip.zip")
+
+    # Publish the record
+    record = service.publish(identity_simple, draft.id)
+
+    res = client.get(
+        f"/records/{draft.id}/files/test_directory_zip.zip/container/test_directory_zip/directory1",
+        headers={
+            "content-type": "application/json",
+        },
+    )
+    assert res.status_code == 200
+
+    zip_bytes = io.BytesIO(res.data)
+    with zipfile.ZipFile(zip_bytes, "r") as zip_ref:
+        namelist = zip_ref.namelist()
+        assert namelist == ["directory1-file1.txt", "directory1-file2.txt"]
+
+        with zip_ref.open("directory1-file1.txt") as f:
+            content = f.read().decode("utf-8")
+            assert content == "directory1-file1\n"
+
+        with zip_ref.open("directory1-file2.txt") as f:
+            content = f.read().decode("utf-8")
+            assert content == "directory1-file2\n"

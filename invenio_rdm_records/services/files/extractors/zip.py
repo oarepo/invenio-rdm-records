@@ -6,7 +6,7 @@ import zipfile
 from os.path import basename
 from pathlib import PurePosixPath
 
-from flask import Response, current_app
+from flask import Response, current_app, stream_with_context
 from invenio_records_resources.services.files.extractors.base import FileExtractor
 from zipstream import ZIP_DEFLATED, ZipStream
 
@@ -41,32 +41,42 @@ class StreamedZipEntry:
         # Single file extraction
         mime = self.entry.get("mime_type", "application/octet-stream")
         filename = self.entry["full_key"]
-        app = current_app._get_current_object()
+
+        # Open the storage stream now (while request/session still active)
+        # otherwise Flask sends HTTP headers but streaming later would fail
+        # due to closed SQL session or request context.
+        cm = self.file_record.open_stream("rb")
+        fp = cm.__enter__()  # get the real file-like object and keep it open
 
         # For files, stream the single file
+        @stream_with_context
         def generate():
             """Generator that streams the file content in chunks."""
-            with app.app_context():
-                # Wrap the underlying file stream in ReplyStream
-                with self.file_record.open_stream("rb") as fp:
-                    # Wrap the actual file object in ReplyStream
-                    with ReplyStream(
-                        fp,
-                        self.header_pos,
-                        self.header,
-                        self.file_size,
-                    ) as reply_stream:
-                        # Open as a ZipFile using your wrapper
-                        with zipfile.ZipFile(reply_stream) as zf:
-                            with zf.open(self.entry["full_key"], "r") as extracted:
-                                # Stream the extracted file in chunks
-                                chunk_size = 64 * 1024
-                                while True:
-                                    chunk = extracted.read(chunk_size)
-                                    if not chunk:
-                                        break
+            try:
+                # Wrap the actual file object in ReplyStream
+                with ReplyStream(
+                    fp,
+                    self.header_pos,
+                    self.header,
+                    self.file_size,
+                ) as reply_stream:
+                    # Open as a ZipFile using your wrapper
+                    with zipfile.ZipFile(reply_stream) as zf:
+                        with zf.open(self.entry["full_key"], "r") as extracted:
+                            # Stream the extracted file in chunks
+                            chunk_size = 64 * 1024
+                            while True:
+                                chunk = extracted.read(chunk_size)
+                                if not chunk:
+                                    break
 
-                                    yield chunk
+                                yield chunk
+            finally:
+                # ensure we close the underlying storage stream
+                try:
+                    cm.__exit__(None, None, None)
+                except Exception:
+                    pass
 
         return Response(
             generate(),
@@ -88,12 +98,19 @@ class StreamedZipEntry:
         """
         dir_name = self.entry["key"]
         zip_filename = f"{dir_name}.zip"
-        app = current_app._get_current_object()
 
+        # Open the storage stream now (while request/session still active)
+        # otherwise Flask sends HTTP headers but streaming later would fail
+        # due to closed SQL session or request context.
+        cm = self.file_record.open_stream("rb")
+        fp = cm.__enter__()  # get the real file-like object and keep it open
+
+        @stream_with_context
         def generate_zip():
+            """Generator that created ZIP file on the fly."""
             # Create ZipStream object
             zs = ZipStream(compress_type=ZIP_DEFLATED)
-            with app.app_context():
+            try:
                 with self.file_record.open_stream("rb") as fp:
                     with ReplyStream(
                         fp,
@@ -135,6 +152,12 @@ class StreamedZipEntry:
 
                             # Stream the generated ZIP file
                             yield from zs
+            finally:
+                # ensure we close the underlying storage stream
+                try:
+                    cm.__exit__(None, None, None)
+                except Exception:
+                    pass
 
         # Cant calculate size here. Realistically zipstream can calculate size, but there will be no compression according to the docs
         return Response(
@@ -198,7 +221,7 @@ class ZipExtractor(FileExtractor):
         if listing_file:
             with listing_file.file.storage().open("rb") as f:
                 listing = json.load(f)
-                # Remove the internal TOC data (byte ranges) as it's not useful for clients
+                # Remove the internal TOC data and byte ranges as it's not useful for clients
                 listing.pop("toc", None)
                 return listing
         return {}
@@ -248,16 +271,17 @@ class ZipExtractor(FileExtractor):
         # Load entry from listing and its toc
         entry, toc = self._get_entry_and_toc(file_record, path)
 
-        # prepare header and offsets
+        # prepare cached header and offsets
         header_pos = toc.get("min_offset", 0)
         header_b64 = toc.get("content", "") or ""
         header = base64.b64decode(header_b64) if header_b64 else b""
         file_size = toc.get("max_offset", 0)
 
         # file_record.open_stream() returns a context manager. We need the
-        # actual underlying file-like object that supports `seek`/`read`.
+        # actual underlying file-like object that supports seek/read.
         # Enter the context manually and keep the context manager so we can
         # close it later when the returned object is closed.
+        # Otherwise flask already send response but we need the stream open
         fp_cm = file_record.open_stream("rb")
         fp = fp_cm.__enter__()
 
@@ -418,6 +442,10 @@ class ReplyStream:
         return self.current_pos
 
     def read(self, size=-1):
+        """Read up to size bytes from the stream.
+
+        Check if the read spans the cached header region and read accordingly.
+        """
         if size == -1:
             size = self.file_size - self.current_pos
 
