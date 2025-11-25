@@ -14,6 +14,7 @@ from pathlib import PurePosixPath
 
 from flask import Response, current_app, stream_with_context
 from invenio_records_resources.services.files.extractors.base import FileExtractor
+from invenio_base.urls import invenio_url_for
 from zipstream import ZIP_DEFLATED, ZipStream
 
 from .opened_entry import OpenedArchiveEntry
@@ -231,6 +232,13 @@ class ZipExtractor(FileExtractor):
                 listing = json.load(f)
                 # Remove the internal TOC data and byte ranges as it's not useful for clients
                 listing.pop("toc", None)
+                for entry in listing.get("entries", []):
+                    for file_entry in entry.get("entries", []):
+                        file_entry["links"] = {
+                            "content": invenio_url_for("record_files.extract_container_item", pid_value=file_record.record["id"], key=file_record.key, path=file_entry["full_key"]),
+                            "preview": invenio_url_for("invenio_app_rdm_records.record_file_preview", pid_value=file_record.record["id"], filename=f"{file_record.key}/container/{file_entry['full_key']}"),
+                        }
+                        
                 return listing
         return {}
 
