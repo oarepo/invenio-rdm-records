@@ -33,7 +33,7 @@ import {
   SET_DOI_NEEDED,
 } from "../types";
 
-async function changeURLAfterCreation(draftURL) {
+async function changeURLAfterCreation (draftURL) {
   window.history.replaceState(undefined, "", draftURL);
 }
 
@@ -63,7 +63,7 @@ export const saveDraftWithUrlUpdate = async (draft, draftsService) => {
   return response;
 };
 
-function _hasValidationErrorsWithSeverityError(errors) {
+function _hasValidationErrorsWithSeverityError (errors) {
   if (typeof errors === "object") {
     if (
       Object.hasOwn(errors, "message") &&
@@ -85,7 +85,7 @@ function _hasValidationErrorsWithSeverityError(errors) {
   }
 }
 
-async function _saveDraft(
+async function _saveDraft (
   draft,
   draftsService,
   {
@@ -327,15 +327,37 @@ export const reservePID = (draft, { pidType }) => {
       payload: { pidType: pidType },
     });
 
+    let response;
     try {
-      let response = await saveDraftWithUrlUpdate(draft, config.service.drafts);
+      response = await _saveDraft(draft, config.service.drafts, {
+        depositState: getState().deposit,
+        dispatchFn: dispatch,
+        failType: RESERVE_PID_FAILED,
+        partialValidationActionType: "RESERVE_PID_VALIDATION_SILENT",
+        showOnlyValidationErrorsWithSeverityError: false,
+      });
+    } catch (error) {
+      // Validation errors are caught but do not block PID reservation.
+      // _saveDraft ensures the review was updated before throwing.
+      if (error.errors) {
+        response = error;
+      } else {
+        // Rethrow non-validation errors
+        console.error("Error saving draft before reserving PID", error, draft);
+        throw error;
+      }
+    }
 
+    try {
       const draftWithLinks = response.data;
-      response = await config.service.drafts.reservePID(draftWithLinks.links, pidType);
+      const reserveResponse = await config.service.drafts.reservePID(
+        draftWithLinks.links,
+        pidType
+      );
 
       dispatch({
         type: RESERVE_PID_SUCCEEDED,
-        payload: { data: response.data },
+        payload: { data: reserveResponse.data },
       });
     } catch (error) {
       console.error("Error reserving PID", error, draft);
