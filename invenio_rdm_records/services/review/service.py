@@ -69,6 +69,11 @@ class ReviewService(RecordService):
                 _("You cannot create a review for an already published record.")
             )
 
+        # Running extra service components
+        self.run_components(
+            "create_review", identity, data=data, record=record, uow=uow
+        )
+
         # Validate the review type (only review requests are valid)
         type_ = self._validate_request_type(data.pop("type", None))
 
