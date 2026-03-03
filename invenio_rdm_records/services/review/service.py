@@ -90,6 +90,7 @@ class ReviewService(RecordService):
         # Set the request on the record and commit the record
         record.parent.review = request_item._request
         uow.register(ParentRecordCommitOp(record.parent))
+        uow.register(RecordIndexOp(record, indexer=self.indexer))
 
         return request_item
 
