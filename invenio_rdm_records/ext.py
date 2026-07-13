@@ -204,6 +204,12 @@ class InvenioRDMRecords(object):
                     RDMCommunityRecordsConfig,
                 )
             ).build(app)
+            community_collections = obj_or_import_string(
+                app.config.get(
+                    "RDM_COMMUNITY_COLLECTIONS_CONFIG_CLASS",
+                    CollectionServiceConfig,
+                )
+            ).build(app)
             record_requests = obj_or_import_string(
                 app.config.get(
                     "RDM_RECORDS_REQUESTS_CONFIG_CLASS", RDMRecordRequestsConfig
@@ -243,6 +249,23 @@ class InvenioRDMRecords(object):
                 app.config.get(
                     "RDM_RECORDS_COMMUNITY_RECORDS_SERVICE_CLASS",
                     CommunityRecordsService,
+                )
+            )
+            community_collections = obj_or_import_string(
+                app.config.get(
+                    "RDM_COMMUNITY_COLLECTIONS_SERVICE_CLASS",
+                    CollectionsService,
+                )
+            )
+            # Records service backing the collections service. Defaults to None,
+            # in which case the shared community_records_service instance is
+            # reused (see init_services). Set to a service class to give
+            # collections its own records service (e.g. one that treats the
+            # global-collections community as an unscoped search).
+            community_collections_records = obj_or_import_string(
+                app.config.get(
+                    "RDM_COMMUNITY_COLLECTIONS_RECORDS_SERVICE_CLASS",
+                    None,
                 )
             )
             community_inclusion = obj_or_import_string(
@@ -315,9 +338,19 @@ class InvenioRDMRecords(object):
         )
 
         # Community collections
-        self.community_collections_service = CollectionsService(
-            config=CollectionServiceConfig.build(app),
-            records_service=self.community_records_service,
+        # By default collections reuse the shared community_records_service
+        # instance. If RDM_COMMUNITY_COLLECTIONS_RECORDS_SERVICE_CLASS is set,
+        # build that class with the community_records config instead, so
+        # collections can use a dedicated records service.
+        if service_classes.community_collections_records is not None:
+            collections_records_service = service_classes.community_collections_records(
+                config=service_configs.community_records
+            )
+        else:
+            collections_records_service = self.community_records_service
+        self.community_collections_service = service_classes.community_collections(
+            config=service_configs.community_collections,
+            records_service=collections_records_service,
         )
 
     def resource_configs(self, app):
@@ -395,6 +428,12 @@ class InvenioRDMRecords(object):
                     RDMCommunityRecordsResourceConfig,
                 )
             ).build(app)
+            community_collections = obj_or_import_string(
+                app.config.get(
+                    "RDM_COMMUNITY_COLLECTIONS_RESOURCE_CONFIG_CLASS",
+                    RDMCollectionsResourceConfig,
+                )
+            ).build(app)
             oaipmh_server = obj_or_import_string(
                 app.config.get(
                     "RDM_OAIPMH_SERVER_RESOURCE_CONFIG_CLASS",
@@ -452,6 +491,12 @@ class InvenioRDMRecords(object):
                 app.config.get(
                     "RDM_COMMUNITY_RECORDS_RESOURCE_CLASS",
                     RDMCommunityRecordsResource,
+                )
+            )
+            community_collections = obj_or_import_string(
+                app.config.get(
+                    "RDM_COMMUNITY_COLLECTIONS_RESOURCE_CLASS",
+                    CollectionsResource,
                 )
             )
             oaipmh_server = obj_or_import_string(
@@ -547,9 +592,9 @@ class InvenioRDMRecords(object):
         )
 
         # Community collections
-        self.community_collections_resource = CollectionsResource(
+        self.community_collections_resource = resource_classes.community_collections(
             service=self.community_collections_service,
-            config=RDMCollectionsResourceConfig.build(app),
+            config=resource_configs.community_collections,
         )
 
     def fix_datacite_configs(self, app):
