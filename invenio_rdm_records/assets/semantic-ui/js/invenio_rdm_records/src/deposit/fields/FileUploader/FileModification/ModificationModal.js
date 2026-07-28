@@ -201,7 +201,7 @@ function ModificationModalComponent({
       <ModalHeader>{i18next.t("Edit files")}</ModalHeader>
       <Formik
         onSubmit={onSubmit}
-        initialValues={{ reason: "", comment: "" }}
+        initialValues={{}}
         validateOnChange={false}
         validateOnBlur={false}
       >
