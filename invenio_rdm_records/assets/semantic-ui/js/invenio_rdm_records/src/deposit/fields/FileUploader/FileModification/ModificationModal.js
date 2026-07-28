@@ -183,7 +183,7 @@ class ModificationModalComponent extends Component {
         <ModalHeader>{i18next.t("Edit files")}</ModalHeader>
         <Formik
           onSubmit={this.handleSubmit}
-          initialValues={{ reason: "", comment: "" }}
+          initialValues={{}}
           validateOnChange={false}
           validateOnBlur={false}
         >

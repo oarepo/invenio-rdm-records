@@ -17,6 +17,7 @@ import { Grid, Message, Icon, Button } from "semantic-ui-react";
 import Overridable from "react-overridable";
 import RDMUppyUploaderPlugin from "./RDMUppyUploaderPlugin";
 import { NewVersionButton } from "../../controls/NewVersionButton";
+import { EditFilesAccordion } from "../FileUploader/EditFilesAccordion";
 import { UploadState } from "../../state/reducers/files";
 import { i18next } from "@translations/invenio_rdm_records/i18next";
 import { getFilesList, FilesListTable, FileUploaderToolbar } from "../FileUploader";
@@ -92,6 +93,7 @@ export const UppyUploaderComponent = ({
   decimalSizeDisplay,
   filesLocked,
   allowEmptyFiles,
+  fileModification,
   ...uiProps
 }) => {
   // We extract the working copy of the draft stored as `values` in formik
@@ -324,26 +326,39 @@ export const UppyUploaderComponent = ({
           record={record}
           {...uiProps}
         >
-          {!isDraftRecord && filesLocked && (
-            <Grid.Row className="file-upload-note pt-5">
-              <Grid.Column width={16}>
-                <Message info>
-                  <NewVersionButton
+          {!isDraftRecord &&
+            filesLocked &&
+            (fileModification.enabled && fileModification.valid_user ? (
+              <Grid.Row className="file-upload-note pt-5">
+                <Grid.Column width={16}>
+                  <EditFilesAccordion
                     record={record}
-                    onError={() => {}}
-                    className="right-floated"
-                    disabled={!permissions.can_new_version}
+                    permissions={permissions}
+                    fileModification={fileModification}
+                    draft={formikDraft}
                   />
-                  <p className="mt-5 display-inline-block">
-                    <Icon name="info circle" size="large" />
-                    {i18next.t(
-                      "You must create a new version to add, modify or delete files."
-                    )}
-                  </p>
-                </Message>
-              </Grid.Column>
-            </Grid.Row>
-          )}
+                </Grid.Column>
+              </Grid.Row>
+            ) : (
+              <Grid.Row className="file-upload-note pt-5">
+                <Grid.Column width={16}>
+                  <Message info>
+                    <NewVersionButton
+                      record={record}
+                      onError={() => {}}
+                      className="right-floated"
+                      disabled={!permissions.can_new_version}
+                    />
+                    <p className="mt-5 display-inline-block">
+                      <Icon name="info circle" size="large" />
+                      {i18next.t(
+                        "You must create a new version to add, modify or delete files."
+                      )}
+                    </p>
+                  </Message>
+                </Grid.Column>
+              </Grid.Row>
+            ))}
         </Overridable>
       </Grid>
     </Overridable>
@@ -388,6 +403,7 @@ UppyUploaderComponent.propTypes = {
   filesLocked: PropTypes.bool,
   permissions: PropTypes.object,
   allowEmptyFiles: PropTypes.bool,
+  fileModification: PropTypes.object,
 };
 
 UppyUploaderComponent.defaultProps = {
@@ -408,4 +424,5 @@ UppyUploaderComponent.defaultProps = {
   decimalSizeDisplay: true,
   filesLocked: false,
   allowEmptyFiles: true,
+  fileModification: {},
 };
