@@ -30,12 +30,13 @@ def upgrade():
         sa.Column("max_file_size", sa.BigInteger(), nullable=False),
         sa.Column("notes", sa.Text(), nullable=False),
         sa.Column("parent_id", UUIDType(), nullable=True),
-        sa.ForeignKeyConstraint(
-            ["parent_id"],
-            ["rdm_parents_metadata.id"],
-            name=op.f("fk_rdm_records_quota_parent_id_rdm_parents_metadata"),
-            ondelete="CASCADE",
-        ),
+        # WHAT: parent_id is a plain unique column (see the UniqueConstraint below),
+        # NOT a foreign key.
+        # WHY no ForeignKey: rdm_parents_metadata only holds standard RDM records;
+        # oarepo custom models (e.g. datasets) keep their parents in their own
+        # *_parent_metadata tables, so an FK here could never be satisfied for them.
+        # No separate index is declared because PostgreSQL backs the UniqueConstraint
+        # below with a unique index, which already serves parent_id lookups.
         sa.PrimaryKeyConstraint("id", name=op.f("pk_rdm_records_quota")),
         sa.UniqueConstraint("parent_id", name=op.f("uq_rdm_records_quota_parent_id")),
         sa.UniqueConstraint("user_id", name=op.f("uq_rdm_records_quota_user_id")),

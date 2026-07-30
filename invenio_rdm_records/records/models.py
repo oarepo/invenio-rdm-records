@@ -200,14 +200,23 @@ class RDMRecordQuota(db.Model, db.Timestamp):
     @declared_attr
     def parent_id(cls):
         """Parent record identifier."""
+        # WHAT: a unique, non-FK column holding the parent record's id.
+        #
+        # WHY no ForeignKey: upstream FKs this to ``rdm_parents_metadata``, which
+        # only holds standard RDM records. oarepo custom models (e.g. datasets)
+        # keep their parents in their own ``*_parent_metadata`` tables, so that FK
+        # could never be satisfied for them and ``set_quota`` would raise a
+        # ForeignKeyViolation. Trade-off: dropping the FK also drops its ON DELETE
+        # CASCADE, so a quota row may be orphaned when its parent is deleted.
+        #
+        # WHY only ``unique`` (no ``index=True``): ``unique=True`` emits a UNIQUE
+        # constraint, and PostgreSQL backs every unique constraint with a unique
+        # index, so ``parent_id`` lookups stay fast without a separate index. This
+        # also keeps the model in step with the migration, which declares the same
+        # ``UniqueConstraint``. (Adding ``index=True`` would instead make SQLAlchemy
+        # emit a unique *index*, diverging from that constraint.)
         return db.Column(
             UUIDType,
-            # 1) If the parent record is deleted, we automatically delete
-            # the parent record quota as well via database-level on delete trigger.
-            db.ForeignKey(
-                RDMVersionsState.__parent_record_model__.id,
-                ondelete="CASCADE",
-            ),
             unique=True,
         )
 
