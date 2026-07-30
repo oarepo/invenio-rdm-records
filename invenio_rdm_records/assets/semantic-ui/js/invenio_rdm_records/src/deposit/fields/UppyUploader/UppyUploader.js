@@ -18,6 +18,7 @@ import Overridable from "react-overridable";
 import RDMUppyUploaderPlugin from "./RDMUppyUploaderPlugin";
 import { NewVersionButton } from "../../controls/NewVersionButton";
 import { EditFilesAccordion } from "../FileUploader/EditFilesAccordion";
+import { QuotaManager } from "../FileUploader/QuotaManager/QuotaManager";
 import { UploadState } from "../../state/reducers/files";
 import { i18next } from "@translations/invenio_rdm_records/i18next";
 import { getFilesList, FilesListTable, FileUploaderToolbar } from "../FileUploader";
@@ -107,6 +108,47 @@ export const UppyUploaderComponent = ({
   const filesLeft = filesList.length < quota.maxFiles;
   const displayImportBtn =
     filesEnabled && isDraftRecord && hasParentRecord && !filesList.length;
+
+  const [showQuotaSection, setShowQuotaSection] = useState(false);
+  const [additionalQuota, _setAdditionalQuota] = useState(
+    quota.quotaIncrease?.additionalStorage / Math.pow(10, 9) || 0
+  );
+
+  const toggleQuotaSection = () => {
+    setShowQuotaSection(!showQuotaSection);
+  };
+
+  // rescale quota from bytes to GB, as user input requires GB
+  const quotaInGB = Object.keys(quota.quotaIncrease ?? {}).reduce((obj, key) => {
+    if (typeof quota["quotaIncrease"][key] === "number") {
+      obj[key] = quota["quotaIncrease"][key] / Math.pow(10, 9);
+    } else {
+      obj[key] = quota["quotaIncrease"][key];
+    }
+    return obj;
+  }, {});
+
+  const setAdditionalQuota = (value) => {
+    // if a user uploads a file without publishing, we can't get the minAdditional
+    // from the backend, so we use the filesSize directly in this case
+    const additionalFilesSize =
+      Math.ceil(filesSize / Math.pow(10, 9)) - quotaInGB["defaultStorage"];
+    const minAdditional = Math.max(
+      quotaInGB["minAdditionalQuotaValue"],
+      additionalFilesSize
+    );
+    const maxAdditional = quotaInGB["maxAdditionalQuotaValue"];
+
+    if (value < minAdditional) {
+      _setAdditionalQuota(minAdditional);
+    } else if (minAdditional <= value && value <= maxAdditional) {
+      _setAdditionalQuota(value);
+    } else if (value > maxAdditional) {
+      _setAdditionalQuota(maxAdditional);
+    } else if (isNaN(value)) {
+      _setAdditionalQuota(minAdditional);
+    }
+  };
 
   const transfersConfig = React.useMemo(() => {
     const {
@@ -237,6 +279,8 @@ export const UppyUploaderComponent = ({
               filesSize={filesSize}
               quota={quota}
               decimalSizeDisplay={decimalSizeDisplay}
+              additionalQuota={additionalQuota}
+              toggleQuotaSection={toggleQuotaSection}
             />
           )}
         </Grid.Row>
@@ -274,6 +318,18 @@ export const UppyUploaderComponent = ({
             </Grid.Row>
           )}
         </Overridable>
+        {showQuotaSection && (
+          <Grid.Row className="pt-0">
+            <QuotaManager
+              draft={formikDraft}
+              quota={quotaInGB}
+              decimalSizeDisplay={decimalSizeDisplay}
+              toggleQuotaSection={toggleQuotaSection}
+              additionalQuota={additionalQuota}
+              setAdditionalQuota={setAdditionalQuota}
+            />
+          </Grid.Row>
+        )}
         <Overridable
           id="ReactInvenioDeposit.FileUploader.FileUploaderArea.container"
           filesList={filesList}
